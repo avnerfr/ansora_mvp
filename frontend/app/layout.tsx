@@ -10,6 +10,7 @@ export const metadata: Metadata = {
   description: 'AI-powered marketing material refinement with community insights',
 }
 
+
 export default function RootLayout({
   children,
 }: {
