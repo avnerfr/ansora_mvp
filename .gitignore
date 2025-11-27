@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.db
+*.sqlite
+*.sqlite3
+
+# Storage
+storage/
+*.pdf
+*.pptx
+*.ppt
+*.png
+*.jpg
+*.jpeg
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Frontend (will be in frontend/.gitignore)
+# But also ignore node_modules at root
+node_modules/
+
+# Logs
+*.log
+
