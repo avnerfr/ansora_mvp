@@ -22,9 +22,10 @@ COPY . .
 # Create storage directory
 RUN mkdir -p storage
 
-# Expose port
+# Expose port (Render will assign this dynamically)
 EXPOSE 8000
 
 # Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use shell form to allow environment variable expansion
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
 
