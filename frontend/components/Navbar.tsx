@@ -1,7 +1,6 @@
 'use client'
 
 import Link from 'next/link'
-import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { removeAuthToken } from '@/lib/auth'
 import { Button } from './Button'
@@ -20,13 +19,9 @@ export const Navbar: React.FC = () => {
         <div className="flex justify-between h-16">
           <div className="flex items-center">
             <Link href="/" className="flex items-center">
-              <Image
+              <img
                 src="/ansora.png"
                 alt="Ansora"
-                width={120}
-                height={40}
-                priority
-                unoptimized
                 className="h-10 w-auto"
               />
             </Link>

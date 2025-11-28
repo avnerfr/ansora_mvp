@@ -21,6 +21,11 @@ storage/
 *.jpg
 *.jpeg
 
+# Exception: Allow static assets in frontend/public
+!frontend/public/*.png
+!frontend/public/*.jpg
+!frontend/public/*.jpeg
+
 # Environment
 .env
 .env.local
