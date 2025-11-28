@@ -3,8 +3,10 @@ from sqlalchemy.orm import sessionmaker, Session
 from models import Base
 import os
 
-# SQLite database
-DATABASE_URL = "sqlite:///./marketing_mvp.db"
+# SQLite database - store in persistent volume
+DB_DIR = os.getenv("DB_PATH", "/app/db")
+os.makedirs(DB_DIR, exist_ok=True)
+DATABASE_URL = f"sqlite:///{DB_DIR}/marketing_mvp.db"
 
 engine = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}, echo=False

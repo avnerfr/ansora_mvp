@@ -19,8 +19,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create storage directory
-RUN mkdir -p storage
+# Create storage and database directories
+RUN mkdir -p storage db
 
 # Expose port (Render will assign this dynamically)
 EXPOSE 8000

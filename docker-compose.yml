@@ -30,6 +30,7 @@ services:
       - ALLOWED_ORIGINS=http://localhost:3000
     volumes:
       - backend_storage:/app/storage
+      - backend_db:/app/db
     depends_on:
       - qdrant
     networks:
@@ -39,6 +40,7 @@ services:
 volumes:
   qdrant_storage:
   backend_storage:
+  backend_db:
 
 networks:
   marketing-mvp-network:
