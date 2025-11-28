@@ -12,7 +12,10 @@ logger = logging.getLogger(__name__)
 
 class VectorStore:
     def __init__(self):
-        self.embeddings = OpenAIEmbeddings(openai_api_key=settings.OPENAI_API_KEY)
+        self.embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=settings.OPENAI_API_KEY
+        )
         
         # Local Docker Qdrant (user documents)
         self.client = QdrantClient(
