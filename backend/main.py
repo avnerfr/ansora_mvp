@@ -29,6 +29,12 @@ origins = [
     if origin.strip()
 ]
 
+# Debug logging
+import logging
+logger = logging.getLogger(__name__)
+logger.info(f"🔍 ALLOWED_ORIGINS env var: {settings.ALLOWED_ORIGINS}")
+logger.info(f"🔍 Parsed origins list: {origins}")
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -37,6 +43,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+logger.info(f"✅ CORS middleware configured with {len(origins)} origins")
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
@@ -52,6 +59,17 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
+
+@app.get("/debug/cors")
+async def debug_cors():
+    """Debug endpoint to check CORS configuration."""
+    return {
+        "allowed_origins_env": settings.ALLOWED_ORIGINS,
+        "parsed_origins": origins,
+        "origins_count": len(origins),
+        "cors_configured": len(origins) > 0
+    }
 
 
 if __name__ == "__main__":

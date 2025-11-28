@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deployment Tester</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .section {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #0070f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0051cc;
+        }
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Deployment Tester</h1>
+    
+    <div class="section">
+        <h2>1. Configure Backend URL</h2>
+        <input type="text" id="backendUrl" placeholder="https://ansora-mvp.onrender.com/" value="">
+        <button onclick="saveBackendUrl()">Save URL</button>
+        <div id="urlResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>2. Test Backend Health</h2>
+        <button onclick="testHealth()">Test /health</button>
+        <button onclick="testRoot()">Test /</button>
+        <div id="healthResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>3. Test CORS</h2>
+        <button onclick="testCors()">Test CORS</button>
+        <div id="corsResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>4. Test Registration</h2>
+        <input type="email" id="regEmail" placeholder="test@example.com" value="test@example.com">
+        <input type="password" id="regPassword" placeholder="password" value="testpass123">
+        <button onclick="testRegister()">Register</button>
+        <div id="registerResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>5. Test Login</h2>
+        <input type="email" id="loginEmail" placeholder="test@example.com" value="test@example.com">
+        <input type="password" id="loginPassword" placeholder="password" value="testpass123">
+        <button onclick="testLogin()">Login</button>
+        <div id="loginResult"></div>
+    </div>
+
+    <script>
+        let backendUrl = '';
+
+        function saveBackendUrl() {
+            backendUrl = document.getElementById('backendUrl').value.trim();
+            if (!backendUrl) {
+                showResult('urlResult', 'Please enter a backend URL', 'error');
+                return;
+            }
+            // Remove trailing slash
+            backendUrl = backendUrl.replace(/\/$/, '');
+            localStorage.setItem('backendUrl', backendUrl);
+            showResult('urlResult', `✅ Saved: ${backendUrl}`, 'success');
+        }
+
+        function loadBackendUrl() {
+            const saved = localStorage.getItem('backendUrl');
+            if (saved) {
+                backendUrl = saved;
+                document.getElementById('backendUrl').value = saved;
+            }
+        }
+
+        async function testHealth() {
+            if (!backendUrl) {
+                showResult('healthResult', '❌ Please configure backend URL first', 'error');
+                return;
+            }
+
+            showResult('healthResult', '⏳ Testing...', 'info');
+            
+            try {
+                const response = await fetch(`${backendUrl}/health`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('healthResult', 
+                        `✅ SUCCESS!\nStatus: ${response.status}\nResponse: ${JSON.stringify(data, null, 2)}`, 
+                        'success'
+                    );
+                } else {
+                    showResult('healthResult', 
+                        `❌ FAILED\nStatus: ${response.status}\nResponse: ${JSON.stringify(data, null, 2)}`, 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('healthResult', 
+                    `❌ ERROR\n${error.message}\n\nPossible causes:\n- Wrong URL\n- Backend not running\n- CORS issue`, 
+                    'error'
+                );
+            }
+        }
+
+        async function testRoot() {
+            if (!backendUrl) {
+                showResult('healthResult', '❌ Please configure backend URL first', 'error');
+                return;
+            }
+
+            showResult('healthResult', '⏳ Testing...', 'info');
+            
+            try {
+                const response = await fetch(`${backendUrl}/`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('healthResult', 
+                        `✅ SUCCESS!\nStatus: ${response.status}\nResponse: ${JSON.stringify(data, null, 2)}`, 
+                        'success'
+                    );
+                } else {
+                    showResult('healthResult', 
+                        `❌ FAILED\nStatus: ${response.status}\nResponse: ${JSON.stringify(data, null, 2)}`, 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('healthResult', 
+                    `❌ ERROR\n${error.message}`, 
+                    'error'
+                );
+            }
+        }
+
+        async function testCors() {
+            if (!backendUrl) {
+                showResult('corsResult', '❌ Please configure backend URL first', 'error');
+                return;
+            }
+
+            showResult('corsResult', '⏳ Testing CORS...', 'info');
+            
+            try {
+                const response = await fetch(`${backendUrl}/health`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const corsHeaders = {
+                    'Access-Control-Allow-Origin': response.headers.get('Access-Control-Allow-Origin'),
+                    'Access-Control-Allow-Methods': response.headers.get('Access-Control-Allow-Methods'),
+                    'Access-Control-Allow-Headers': response.headers.get('Access-Control-Allow-Headers'),
+                };
+                
+                if (response.ok && corsHeaders['Access-Control-Allow-Origin']) {
+                    showResult('corsResult', 
+                        `✅ CORS WORKING!\n\nCORS Headers:\n${JSON.stringify(corsHeaders, null, 2)}\n\nYour origin is allowed!`, 
+                        'success'
+                    );
+                } else {
+                    showResult('corsResult', 
+                        `⚠️ CORS may not be configured\n\nCORS Headers:\n${JSON.stringify(corsHeaders, null, 2)}\n\nIf all are null, CORS might not be set up correctly.`, 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('corsResult', 
+                    `❌ CORS ERROR\n${error.message}\n\nThis likely means:\n- CORS is not configured\n- Backend URL is wrong\n- Backend is not running`, 
+                    'error'
+                );
+            }
+        }
+
+        async function testRegister() {
+            if (!backendUrl) {
+                showResult('registerResult', '❌ Please configure backend URL first', 'error');
+                return;
+            }
+
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+
+            if (!email || !password) {
+                showResult('registerResult', '❌ Please enter email and password', 'error');
+                return;
+            }
+
+            showResult('registerResult', '⏳ Registering...', 'info');
+            
+            try {
+                const response = await fetch(`${backendUrl}/api/v1/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password,
+                        is_subscribed: false
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('registerResult', 
+                        `✅ REGISTRATION SUCCESS!\n\nToken received:\n${data.access_token.substring(0, 50)}...`, 
+                        'success'
+                    );
+                } else {
+                    showResult('registerResult', 
+                        `❌ REGISTRATION FAILED\nStatus: ${response.status}\nError: ${JSON.stringify(data, null, 2)}`, 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('registerResult', 
+                    `❌ ERROR\n${error.message}\n\nPossible causes:\n- CORS issue\n- Backend error\n- Network error`, 
+                    'error'
+                );
+            }
+        }
+
+        async function testLogin() {
+            if (!backendUrl) {
+                showResult('loginResult', '❌ Please configure backend URL first', 'error');
+                return;
+            }
+
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+
+            if (!email || !password) {
+                showResult('loginResult', '❌ Please enter email and password', 'error');
+                return;
+            }
+
+            showResult('loginResult', '⏳ Logging in...', 'info');
+            
+            try {
+                const response = await fetch(`${backendUrl}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('loginResult', 
+                        `✅ LOGIN SUCCESS!\n\nToken received:\n${data.access_token.substring(0, 50)}...`, 
+                        'success'
+                    );
+                } else {
+                    showResult('loginResult', 
+                        `❌ LOGIN FAILED\nStatus: ${response.status}\nError: ${JSON.stringify(data, null, 2)}`, 
+                        'error'
+                    );
+                }
+            } catch (error) {
+                showResult('loginResult', 
+                    `❌ ERROR\n${error.message}\n\nPossible causes:\n- User doesn't exist\n- Wrong password\n- CORS issue\n- Backend error`, 
+                    'error'
+                );
+            }
+        }
+
+        function showResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = `result ${type}`;
+        }
+
+        // Load saved URL on page load
+        window.onload = loadBackendUrl;
+    </script>
+</body>
+</html>
+
