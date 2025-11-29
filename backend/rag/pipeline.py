@@ -28,24 +28,35 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
         metadata = doc.metadata if hasattr(doc, 'metadata') else {}
         content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
         
-        # Handle Reddit posts vs user documents
-        source_type = metadata.get("source_type", "document")
-        if source_type == "reddit":
-            doc_id = metadata.get("thread_url", "")
-            filename = f"Reddit: {metadata.get('author', 'Unknown User')}"
-            file_type = "reddit_post"
-        else:
-            doc_id = str(metadata.get("file_id", ""))
-            filename = metadata.get("filename", "Unknown")
-            file_type = metadata.get("file_type", "Unknown")
+        # Get score from metadata (where vectorstore puts it)
+        score = metadata.get("score", 0.0)
         
-        sources.append({
-            "doc_id": doc_id,
-            "filename": filename,
-            "file_type": file_type,
-            "snippet": content[:500] if len(content) > 500 else content,
-            "score": getattr(doc, 'score', 0.0) if hasattr(doc, 'score') else 0.0
-        })
+        # Determine source type and set appropriate defaults
+        source_type = metadata.get("source", metadata.get("source_type", "document"))
+        
+        # Build source object with sensible defaults
+        source = {
+            "snippet": (content[:500] if len(content) > 500 else content) or "",
+            "text": content or "",
+            "score": score if score is not None else 0.0,
+            "source": source_type,
+            "source_type": source_type,
+            
+            # Core fields with defaults
+            "filename": metadata.get("filename") or "Unknown",
+            "file_type": metadata.get("file_type") or "unknown",
+            "doc_id": str(metadata.get("file_id") or metadata.get("doc_id") or ""),
+            "file_id": metadata.get("file_id"),
+            
+            # Reddit-specific fields (can be None)
+            "subreddit": metadata.get("subreddit"),
+            "author": metadata.get("author"),
+            "thread_url": metadata.get("thread_url"),
+            "timestamp": metadata.get("timestamp"),
+            "type": metadata.get("type"),
+        }
+        
+        sources.append(source)
     return sources
 
 
@@ -102,7 +113,7 @@ async def process_rag(
     # Search Reddit posts (cloud Qdrant)
     try:
         logger.info("Searching Reddit posts from cloud Qdrant...")
-        reddit_docs = vector_store.search_reddit_posts(marketing_text, k=5)
+        reddit_docs = vector_store.search_reddit_posts(marketing_text, k=10)
         logger.info(f"✓ Retrieved {len(reddit_docs)} Reddit posts")
         
         # Log Reddit post details

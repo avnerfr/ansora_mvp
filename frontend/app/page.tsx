@@ -11,17 +11,17 @@ import { Button } from '@/components/Button'
 import { documentsAPI, ragAPI } from '@/lib/api'
 import { isAuthenticated } from '@/lib/auth'
 
-const TOPIC_OPTIONS = [
+const KEYWORD_OPTIONS = [
   'cybersecurity',
   'network security',
-  'marketing',
-  'data analytics',
-  'SaaS',
+  'sysadmin',
+  'Fortinet',
+  'Cisco',
 ]
 
 export default function HomePage() {
   const router = useRouter()
-  const [selectedTopics, setSelectedTopics] = useState<string[]>([])
+  const [selectedKeywords, setSelectedKeywords] = useState<string[]>([])
   const [marketingText, setMarketingText] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
@@ -74,8 +74,8 @@ export default function HomePage() {
 
   const handleProcess = async () => {
     // Validation
-    if (selectedTopics.length === 0) {
-      alert('Please select at least one topic')
+    if (selectedKeywords.length === 0) {
+      alert('Please select or enter at least one keyword')
       return
     }
 
@@ -88,7 +88,7 @@ export default function HomePage() {
 
     try {
       const response = await ragAPI.process(
-        selectedTopics,
+        selectedKeywords,
         marketingText
       )
       console.log('Response: ', response)
@@ -135,7 +135,7 @@ export default function HomePage() {
               Refine Your Marketing Materials
             </h1>
             <p className="mt-2 text-gray-600">
-              Provide your request, select topics, and let AI enhance your
+              Provide your request, select or enter keywords, and let AI enhance your
               marketing content.
             </p>
           </div>
@@ -204,17 +204,17 @@ export default function HomePage() {
             </section>
           </div>
 
-          {/* Section 2: Topics (MultiSelect Dropdown) */}
+          {/* Section 2: Keywords (MultiSelect with Custom Input) */}
           <section className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              2. Topics
+              2. Keywords
             </h2>
             <MultiSelect
-              options={TOPIC_OPTIONS}
-              selected={selectedTopics}
-              onChange={setSelectedTopics}
+              options={KEYWORD_OPTIONS}
+              selected={selectedKeywords}
+              onChange={setSelectedKeywords}
               label=""
-              placeholder="Select topics..."
+              placeholder="Select or type keywords..."
             />
           </section>
 

@@ -117,11 +117,21 @@ class RAGProcessResponse(BaseModel):
 
 
 class SourceItem(BaseModel):
-    doc_id: str
-    filename: str
-    file_type: str
-    snippet: str
-    score: float
+    doc_id: Optional[str] = None
+    filename: Optional[str] = None
+    file_type: Optional[str] = None
+    snippet: Optional[str] = None
+    score: Optional[float] = 0.0
+    # Additional optional fields for Reddit posts
+    source: Optional[str] = None
+    source_type: Optional[str] = None
+    file_id: Optional[int] = None
+    subreddit: Optional[str] = None
+    author: Optional[str] = None
+    thread_url: Optional[str] = None
+    timestamp: Optional[str] = None
+    type: Optional[str] = None
+    text: Optional[str] = None
 
 
 class RAGResultResponse(BaseModel):

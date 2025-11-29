@@ -128,19 +128,29 @@ class VectorStore:
             # Convert Qdrant results to LangChain Documents
             documents = []
             for i, point in enumerate(search_results.points, 1):
+                # Log the payload to see what fields are available
+                logger.info(f"Point {i} payload keys: {list(point.payload.keys())}")
+                
                 # Extract text from payload
                 text = point.payload.get('text', '') or point.payload.get('content', '')
+                url = point.payload.get('thread_url', '')
+                url = url.replace("https://old.reddit.com/r/", "https://reddit.com/r/")
                 
-                # Create metadata
+                # Create metadata - extract actual values from payload
                 metadata = {
-                    "source_type": "reddit",
-                    "author": point.payload.get('author', 'Unknown'),
+                    "source": "reddit",
+                    "subreddit": point.payload.get('subreddit'),
+                    "author": point.payload.get('author'),
+                    "type": point.payload.get('type'),  # ✅ Fixed: get actual value
+                    "text": text,
+                    "thread_url": url,
+                    "timestamp": point.payload.get('timestamp'),
+                    "score": point.score,
                     "filename": f"Reddit: {point.payload.get('author', 'Unknown')}",
-                    "file_type": "reddit_post",
-                    "thread_url": point.payload.get('thread_url', ''),
-                    "timestamp": point.payload.get('timestamp', ''),
-                    "score": point.score if hasattr(point, 'score') else 0.0,
                 }
+                
+                # Log what we extracted
+                logger.info(f"Extracted metadata - author: {metadata['author']}, subreddit: {metadata['subreddit']}, type: {metadata['type']}")
                 
                 # Create Document
                 doc = Document(
