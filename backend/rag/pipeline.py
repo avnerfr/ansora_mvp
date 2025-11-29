@@ -102,7 +102,7 @@ async def process_rag(
     # Search Reddit posts (cloud Qdrant)
     try:
         logger.info("Searching Reddit posts from cloud Qdrant...")
-        reddit_docs = vector_store.search_reddit_posts(marketing_text, k=2)
+        reddit_docs = vector_store.search_reddit_posts(marketing_text, k=5)
         logger.info(f"✓ Retrieved {len(reddit_docs)} Reddit posts")
         
         # Log Reddit post details
