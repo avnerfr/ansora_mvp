@@ -4,7 +4,7 @@ FROM python:3.12-slim as builder
 WORKDIR /app
 
 # Install system dependencies needed for building Python packages
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     && rm -rf /var/lib/apt/lists/*
@@ -13,23 +13,28 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 
 # Install CPU-only PyTorch first to reduce image size (no CUDA dependencies ~2GB smaller)
+# Only install torch (not torchvision/torchaudio) - saves ~500MB
 # This prevents sentence-transformers from pulling the full CUDA-enabled PyTorch
-RUN pip install --no-cache-dir --user --index-url https://download.pytorch.org/whl/cpu torch torchvision torchaudio
+RUN pip install --no-cache-dir --user --index-url https://download.pytorch.org/whl/cpu torch
 
 # Install Python dependencies in a virtual environment
+# Use --no-deps for packages that might pull unnecessary extras
 RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Clean up pip cache and temporary files
+RUN rm -rf /root/.cache/pip
 
 # Final stage - minimal runtime image
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install only runtime system dependencies
-RUN apt-get update && apt-get install -y \
-    tesseract-ocr \
-    libtesseract-dev \
+# Install only essential runtime system dependencies
+# Removed: tesseract-ocr, libtesseract-dev (OCR is optional, saves ~50MB)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /root/.local

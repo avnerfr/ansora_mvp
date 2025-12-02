@@ -1,5 +1,6 @@
 fastapi==0.104.1
-uvicorn[standard]==0.24.0
+# Use uvicorn without [standard] extras to save space (uvloop, httptools are optional)
+uvicorn==0.24.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
@@ -15,8 +16,9 @@ openai>=1.40.0,<2.0.0
 sentence-transformers>=2.2.0
 pypdf==3.17.4
 python-pptx==0.6.23
-pillow==10.1.0
-pytesseract==0.3.10
+# Optional: OCR support (can be removed if not needed)
+# pillow==10.1.0
+# pytesseract==0.3.10
 python-dotenv==1.0.0
-unstructured[ppt]>=0.11.0
+# Removed: unstructured[ppt]>=0.11.0 (very heavy, ~1-2GB, replaced with python-pptx)
 

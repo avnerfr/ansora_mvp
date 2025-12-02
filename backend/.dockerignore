@@ -4,12 +4,16 @@ __pycache__/
 *$py.class
 *.so
 .Python
+build/
+dist/
+*.egg-info/
 env/
 venv/
 ENV/
 .venv
 pip-log.txt
 pip-delete-this-directory.txt
+.python-version
 
 # Testing
 .pytest_cache/
@@ -17,6 +21,10 @@ pip-delete-this-directory.txt
 htmlcov/
 .tox/
 *.cover
+.hypothesis/
+tests/
+test_*.py
+*_test.py
 
 # IDEs
 .vscode/
@@ -24,10 +32,14 @@ htmlcov/
 *.swp
 *.swo
 *~
+.project
+.pydevproject
 
 # OS
 .DS_Store
 Thumbs.db
+*.swp
+*.bak
 
 # Project specific
 storage/
@@ -39,32 +51,52 @@ db/
 # Logs
 *.log
 logs/
+*.log.*
 
 # Environment files (should be set via Render env vars)
 .env
 .env.local
 .env.*.local
+.envrc
 
 # Git
 .git/
 .gitignore
+.gitattributes
 
 # Documentation
 *.md
 docs/
+README*
+CHANGELOG*
+LICENSE*
 
 # Docker
-Dockerfile
+Dockerfile*
 .dockerignore
-docker-compose.yml
+docker-compose*.yml
+.docker/
 
-# Jupyter notebooks (if any)
+# Jupyter notebooks
 *.ipynb
 .ipynb_checkpoints/
+notebooks/
 
 # Temporary files
 *.tmp
 *.temp
 tmp/
 temp/
+.cache/
+
+# Data files (if any)
+*.csv
+*.json
+*.xlsx
+*.xls
+data/
+
+# Build artifacts
+*.whl
+*.tar.gz
 
