@@ -20,13 +20,9 @@ class VectorStore:
         )
         
         # SentenceTransformer for cloud Qdrant (Reddit/YouTube data)
-        # This matches the embedding model used to create the collection
-        try:
-            self.cloud_embeddings = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-            logger.info(f"✓ SentenceTransformer initialized: {self.cloud_embeddings.get_sentence_embedding_dimension()}D")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize SentenceTransformer: {type(e).__name__}: {str(e)}")
-            self.cloud_embeddings = None
+        # Lazy-loaded to reduce memory usage at startup
+        self._cloud_embeddings = None
+        self._cloud_embeddings_model_name = "sentence-transformers/all-MiniLM-L6-v2"
         
         # Local Docker Qdrant (user documents)
         self.client = QdrantClient(
@@ -39,6 +35,19 @@ class VectorStore:
             url="https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333",
             api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.s53XfrTWp0MHokNbtLSx2ikhLdi9Miru2Q99NxACFo8"
         )
+    
+    @property
+    def cloud_embeddings(self):
+        """Lazy-load SentenceTransformer only when needed."""
+        if self._cloud_embeddings is None:
+            try:
+                logger.info("Initializing SentenceTransformer (lazy load)...")
+                self._cloud_embeddings = SentenceTransformer(self._cloud_embeddings_model_name)
+                logger.info(f"✓ SentenceTransformer initialized: {self._cloud_embeddings.get_sentence_embedding_dimension()}D")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize SentenceTransformer: {type(e).__name__}: {str(e)}")
+                self._cloud_embeddings = None
+        return self._cloud_embeddings
     
     def get_collection_name(self, user_id: int) -> str:
         """Get the Qdrant collection name for a user."""
@@ -154,10 +163,11 @@ class VectorStore:
                 if actual_vector_size == 384:
                     # Collection uses SentenceTransformer embeddings (384D)
                     logger.info("Generating query embedding with SentenceTransformer (384D)...")
-                    if self.cloud_embeddings is None:
+                    embeddings = self.cloud_embeddings  # This will lazy-load if needed
+                    if embeddings is None:
                         logger.error("❌ SentenceTransformer not initialized!")
                         return []
-                    query_vector = self.cloud_embeddings.encode(query, convert_to_numpy=True).tolist()
+                    query_vector = embeddings.encode(query, convert_to_numpy=True).tolist()
                 elif actual_vector_size == 1536:
                     # Collection uses OpenAI embeddings (1536D)
                     logger.info("Generating query embedding with OpenAI (1536D)...")
