@@ -122,16 +122,35 @@ class SourceItem(BaseModel):
     file_type: Optional[str] = None
     snippet: Optional[str] = None
     score: Optional[float] = 0.0
-    # Additional optional fields for Reddit posts
+    # Source type fields
     source: Optional[str] = None
     source_type: Optional[str] = None
+    doc_type: Optional[str] = None
     file_id: Optional[int] = None
+    text: Optional[str] = None
+    
+    # Reddit-specific fields
     subreddit: Optional[str] = None
     author: Optional[str] = None
+    author_fullname: Optional[str] = None
     thread_url: Optional[str] = None
+    comment_url: Optional[str] = None
+    parent_comment_url: Optional[str] = None
+    thread_index: Optional[int] = None
+    reply_index: Optional[int] = None
+    flair_text: Optional[str] = None
+    ups: Optional[int] = None
     timestamp: Optional[str] = None
+    created_utc: Optional[str] = None
     type: Optional[str] = None
-    text: Optional[str] = None
+    
+    # YouTube-specific fields
+    channel: Optional[str] = None
+    title: Optional[str] = None
+    video_url: Optional[str] = None
+    start_sec: Optional[float] = None
+    end_sec: Optional[float] = None
+    level: Optional[int] = None
 
 
 class RAGResultResponse(BaseModel):

@@ -157,11 +157,33 @@ async def get_results(
     
     # Convert sources from JSON to SourceItem objects
     sources = []
-    for s in job.sources:
-        if isinstance(s, dict):
-            sources.append(SourceItem(**s))
-        else:
-            sources.append(s)
+    try:
+        for s in job.sources:
+            if isinstance(s, dict):
+                # Clean up any "Unknown" strings and convert to None
+                cleaned_source = {}
+                for key, value in s.items():
+                    if value == "Unknown" or value == "unknown":
+                        cleaned_source[key] = None
+                    else:
+                        cleaned_source[key] = value
+                try:
+                    sources.append(SourceItem(**cleaned_source))
+                except Exception as e:
+                    logger.warning(f"⚠ Failed to create SourceItem from {cleaned_source}: {str(e)}")
+                    # Create a minimal valid SourceItem
+                    sources.append(SourceItem(
+                        filename=cleaned_source.get("filename", "Unknown"),
+                        snippet=cleaned_source.get("snippet", ""),
+                        score=cleaned_source.get("score", 0.0),
+                        source=cleaned_source.get("source", "unknown")
+                    ))
+            else:
+                sources.append(s)
+    except Exception as e:
+        logger.error(f"❌ Error processing sources: {type(e).__name__}: {str(e)}", exc_info=True)
+        # Return empty sources list if there's an error
+        sources = []
     
     return RAGResultResponse(
         job_id=job.job_id,

@@ -21,6 +21,43 @@ You have access to supporting context from internal documents and Reddit discuss
 Rewrite and refine the marketing material to be more compelling, clear, and tailored to these backgrounds. Use insights from both the internal documents and community discussions. Provide a final marketing text and explain briefly how you used the sources."""
 
 
+def _convert_timestamp(value):
+    """Convert timestamp to string if it's a number, otherwise return as-is or None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+    if isinstance(value, str):
+        return value
+    return None
+
+def _safe_int(value):
+    """Safely convert value to int, return None if conversion fails."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+def _safe_float(value):
+    """Safely convert value to float, return None if conversion fails."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+def _safe_str(value):
+    """Safely convert value to string, return None if value is None or empty."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value if value else None
+    return str(value)
+
+
 def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
     """Format retrieved documents into source items."""
     sources = []
@@ -31,29 +68,52 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
         # Get score from metadata (where vectorstore puts it)
         score = metadata.get("score", 0.0)
         
-        # Determine source type and set appropriate defaults
+        # Determine source type and doc type
         source_type = metadata.get("source", metadata.get("source_type", "document"))
+        doc_type = metadata.get("doc_type", "unknown")
         
-        # Build source object with sensible defaults
+        # Build source object with all available fields
+        # Prepare filename
+        filename = metadata.get("filename")
+        filename_str = str(filename) if filename and filename != "Unknown" else "Unknown"
+        
         source = {
             "snippet": (content[:500] if len(content) > 500 else content) or "",
             "text": content or "",
             "score": score if score is not None else 0.0,
-            "source": source_type,
-            "source_type": source_type,
+            "source": str(source_type) if source_type else None,
+            "source_type": str(source_type) if source_type else None,
+            "doc_type": str(doc_type) if doc_type else None,
             
-            # Core fields with defaults
-            "filename": metadata.get("filename") or "Unknown",
-            "file_type": metadata.get("file_type") or "unknown",
+            # Core fields with defaults - ensure proper types
+            "filename": filename_str,
+            "file_type": str(metadata.get("file_type")) if metadata.get("file_type") and metadata.get("file_type") != "unknown" else None,
             "doc_id": str(metadata.get("file_id") or metadata.get("doc_id") or ""),
-            "file_id": metadata.get("file_id"),
+            "file_id": _safe_int(metadata.get("file_id")),
             
-            # Reddit-specific fields (can be None)
-            "subreddit": metadata.get("subreddit"),
-            "author": metadata.get("author"),
-            "thread_url": metadata.get("thread_url"),
-            "timestamp": metadata.get("timestamp"),
-            "type": metadata.get("type"),
+            # Reddit-specific fields (can be None) - ensure proper types
+            "subreddit": _safe_str(metadata.get("subreddit")),
+            "author": _safe_str(metadata.get("author") or metadata.get("author_fullname")),
+            "author_fullname": _safe_str(metadata.get("author_fullname")),
+            "thread_url": _safe_str(metadata.get("thread_url")),
+            "comment_url": _safe_str(metadata.get("comment_url")),
+            "parent_comment_url": _safe_str(metadata.get("parent_comment_url")),
+            "thread_index": _safe_int(metadata.get("thread_index")),
+            "reply_index": _safe_int(metadata.get("reply_index")),
+            "flair_text": _safe_str(metadata.get("flair_text")),
+            "ups": _safe_int(metadata.get("ups")),
+            # Convert timestamp/created_utc to string if they're numbers
+            "timestamp": _convert_timestamp(metadata.get("timestamp") or metadata.get("created_utc")),
+            "created_utc": _convert_timestamp(metadata.get("created_utc")),
+            "type": _safe_str(metadata.get("type") or doc_type),
+            
+            # YouTube-specific fields (can be None) - ensure proper types
+            "channel": _safe_str(metadata.get("channel")),
+            "title": _safe_str(metadata.get("title")),
+            "video_url": _safe_str(metadata.get("video_url")),
+            "start_sec": _safe_float(metadata.get("start_sec")),
+            "end_sec": _safe_float(metadata.get("end_sec")),
+            "level": _safe_int(metadata.get("level")),
         }
         
         sources.append(source)
