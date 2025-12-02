@@ -4,16 +4,17 @@ uvicorn==0.24.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
-pydantic[email]
+pydantic  # Removed [email] extra to save space
 sqlalchemy==2.0.23
 aiosqlite==0.19.0
-langchain==0.2.16
-langchain-openai==0.1.23
-langchain-community==0.2.12
+# LangChain - minimal install (only what we need)
 langchain-core==0.2.38
+langchain-community==0.2.12
+langchain-openai==0.1.23  # Only needed for ChatOpenAI (LLM), not embeddings
 qdrant-client>=1.11.0,<2.0.0
-openai>=1.40.0,<2.0.0
+openai>=1.40.0,<2.0.0  # Only needed for ChatOpenAI (LLM), not embeddings
 sentence-transformers>=2.2.0
+# Removed: langchain==0.2.16 (meta-package, not needed - we use specific packages)
 pypdf==3.17.4
 python-pptx==0.6.23
 # Optional: OCR support (can be removed if not needed)
