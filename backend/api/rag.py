@@ -80,7 +80,11 @@ async def process_marketing_material(
             detail="Marketing text cannot be empty"
         )
     
-    logger.info(f"Request validated - Backgrounds: {request.backgrounds}, Text length: {len(request.marketing_text)}")
+    logger.info(
+        f"Request validated - Backgrounds: {request.backgrounds}, "
+        f"Text length: {len(request.marketing_text)}, "
+        f"Tone: {request.tone}, Asset Type: {request.asset_type}, ICP: {request.icp}"
+    )
     
     # Get user's template or use override
     template = request.template_override
@@ -98,7 +102,10 @@ async def process_marketing_material(
             user_id=current_user.id,
             backgrounds=request.backgrounds,
             marketing_text=request.marketing_text,
-            template=template
+            tone=request.tone,
+            asset_type=request.asset_type,
+            icp=request.icp,
+            template=template,
         )
         logger.info(f"✓ RAG pipeline completed - Output: {len(refined_text)} chars, Sources: {len(sources)}")
     except Exception as e:

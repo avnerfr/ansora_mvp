@@ -109,6 +109,9 @@ class PromptTemplateResponse(BaseModel):
 class RAGProcessRequest(BaseModel):
     backgrounds: List[str]
     marketing_text: str
+    tone: Optional[str] = None
+    asset_type: Optional[str] = None
+    icp: Optional[str] = None
     template_override: Optional[str] = None
 
 

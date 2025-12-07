@@ -14,11 +14,94 @@ logging.basicConfig(
 )
 
 
-DEFAULT_TEMPLATE = """You are a senior marketing strategist. The user is working in the following backgrounds: {{backgrounds}}. They provided marketing material: {{marketing_text}}. 
+asset_type_rules = {
+    "email": """
+subject: 1 line, pain-based,
+opening: exactly 2 sentences (context → pain),
+bullets: exactly 3 bullets,
+    1) Pain (practitioner phrasing)
+    2) Insight (why it happens)
+    3) Solution/value
+cta: 1 sentence
+""",
+    "one-pager": """
+headline: 1 line
+subhead: 1 line
+lead paragraph: max 2 sentences
+problems: exactly 6 bullets, practitioner phrasing only
+features: exactly 4 bullets starting with "Feature:" mapped to problems
+business impact: exactly 3 bullets, high-level, no numbers
+cta: 1 line
+""",
+    "landing page": """
+headline: 1 line
+subhead: 1 line
+""",
+    # Support both "blog" (UI) and "blog post" (notebook wording)
+    "blog": """
+intro paragraph: max 2 sentences
+sections: exactly 3 sections with one-line subheads
+conclusion: 1 line
+""",
+    "blog post": """
+intro paragraph: max 2 sentences
+sections: exactly 3 sections with one-line subheads
+conclusion: 1 line
+""",
+}
 
-You have access to supporting context from internal documents and Reddit discussions: {{context}}
 
-Rewrite and refine the marketing material to be more compelling, clear, and tailored to these backgrounds. Use insights from both the internal documents and community discussions. Provide a final marketing text and explain briefly how you used the sources."""
+tone_rules = {
+    "manager": """
+- Professional, sharp, technical.
+- Max 18 words per sentence.
+- Direct practitioner language: rule bloat, CAB fatigue, shadow rules, hybrid inconsistencies, outage fear.
+- No hype. No marketing fluff.
+""",
+    "technical": """
+- Clipped, urgent, engineer-to-engineer.
+- Max 12 words per sentence.
+- Stripped of politeness. Only risk, clarity, pain, consequence.
+- Use INSIGHTS aggressively.
+""",
+}
+
+DEFAULT_TEMPLATE = """
+
+
+------------------------------------------------------
+CONTENT GUARDRAILS (MANDATORY)
+------------------------------------------------------
+- All claims must come directly from {{context}} (user-provided pain points and context).
+- No invented metrics, quotes, statistics, before/after claims, or capabilities.
+- No buzzwords. No vague promises.
+- Plain text output only.
+- Keep structure EXACT.
+
+------------------------------------------------------
+INPUTS
+
+Use the following tone and style guidelines:
+{{tone_rules[tone]}}
+
+The user provided the following original text: {{user_provided_text}}
+Also make sure to use language and key insights from the following context: {{vector_search_context}}
+
+Use cases / key themes to prioritize: {{backgrounds}}
+
+------------------------------------------------------
+OUTPUT
+Provide the following asset: {{asset_type}} using the following structure and formatting rules:
+{{asset_type_rules[asset_type]}}
+
+The Ideal Customer Profile / role is: {{icp}}
+
+Produce a finalized asset following all structure rules,
+tone rules, and content guardrails exactly.
+No extra commentary.
+From references provide all available information.
+""".strip()
+
 
 
 def _convert_timestamp(value):
@@ -124,7 +207,10 @@ async def process_rag(
     user_id: int,
     backgrounds: List[str],
     marketing_text: str,
-    template: str = None
+    tone: str | None = None,
+    asset_type: str | None = None,
+    icp: str | None = None,
+    template: str | None = None,
 ) -> tuple[str, List[Dict[str, Any]]]:
     """
     Process RAG pipeline and return refined text and sources.
@@ -134,10 +220,11 @@ async def process_rag(
     """
     logger.info(f"=== Starting RAG Pipeline ===")
     logger.info(f"User ID: {user_id}")
-    logger.info(f"Backgrounds: {backgrounds}")
-    logger.info(f"Marketing text length: {len(marketing_text)} chars")
-    logger.info(f"Marketing text preview: {marketing_text[:100]}...")
-    logger.debug(f"Full marketing text: {marketing_text}")
+    logger.info(f"Backgrounds / use cases: {backgrounds}")
+    logger.info(f"Context text length: {len(marketing_text)} chars")
+    logger.info(f"Context text preview: {marketing_text[:100]}...")
+    logger.info(f"Tone: {tone}, Asset Type: {asset_type}, ICP: {icp}")
+    logger.debug(f"Full context text: {marketing_text}")
     logger.debug(f"Template: {template}")
     
     # Use default template if none provided
@@ -198,20 +285,47 @@ async def process_rag(
         context_parts.append(f"[From {filename}]: {content[:1000]}")
         logger.debug(f"  Context part {i} from {filename}: {len(content)} chars")
     
-    context = "\n\n".join(context_parts) if context_parts else "No relevant documents found."
-    logger.info(f"✓ Context built: {len(context)} chars from {len(context_parts)} sources")
+    vector_search_context = (
+        "\n\n".join(context_parts) if context_parts else "No relevant documents found."
+    )
+    logger.info(
+        f"✓ Vector search context built: {len(vector_search_context)} chars from {len(context_parts)} sources"
+    )
     
     # Format backgrounds
     backgrounds_str = ", ".join(backgrounds)
-    logger.info(f"Backgrounds string: {backgrounds_str}")
+    logger.info(f"Backgrounds / use cases string: {backgrounds_str}")
     
     # Build prompt - replace template variables
-    # User can use {{backgrounds}}, {{marketing_text}}, {{context}} in template
+    # User can use:
+    #   {{backgrounds}} or {{use_cases}}                  → comma-separated use cases
+    #   {{marketing_text}} or {{context}}                → user-provided context text
+    #   {{vector_search_context}}                        → RAG context from Qdrant
+    #   {{tone}}, {{asset_type}}, {{icp}}                → generation controls
+    #   {{tone_instructions}} or {{tone_rules[tone]}}    → expanded tone_rules[tone]
+    #   {{asset_type_instructions}} or {{asset_type_rules[asset_type]}}
+    #                                                   → expanded asset_type_rules[asset_type]
+    #   {{user_provided_text}}                           → alias for user context text
     logger.info("Building final prompt...")
+
+    # Expand structured rule blocks from tone/asset type dictionaries
+    tone_instructions = tone_rules.get(tone, tone or "") if tone else ""
+    asset_type_instructions = asset_type_rules.get(asset_type, asset_type or "") if asset_type else ""
+
     prompt = template
     prompt = prompt.replace('{{backgrounds}}', backgrounds_str)
+    prompt = prompt.replace('{{use_cases}}', backgrounds_str)
     prompt = prompt.replace('{{marketing_text}}', marketing_text)
-    prompt = prompt.replace('{{context}}', context)
+    prompt = prompt.replace('{{context}}', marketing_text)
+    prompt = prompt.replace('{{user_provided_text}}', marketing_text)
+    prompt = prompt.replace('{{vector_search_context}}', vector_search_context)
+    prompt = prompt.replace('{{tone}}', tone or '')
+    prompt = prompt.replace('{{tone_instructions}}', tone_instructions)
+    prompt = prompt.replace('{{tone_rules[tone]}}', tone_instructions)
+    prompt = prompt.replace('{{asset_type}}', asset_type or '')
+    prompt = prompt.replace('{{asset_type_instructions}}', asset_type_instructions)
+    prompt = prompt.replace('{{asset_type_rules[asset_type]}}', asset_type_instructions)
+    prompt = prompt.replace('{{icp}}', icp or '')
     logger.info(f"✓ Prompt built: {len(prompt)} chars")
     logger.debug(f"Full prompt:\n{prompt}")
     
@@ -227,7 +341,14 @@ async def process_rag(
     # Generate response
     logger.info("Sending request to OpenAI API...")
     messages = [
-        SystemMessage(content="You are an expert marketing strategist who creates compelling, refined marketing content."),
+        SystemMessage(content="""
+        You are an enterprise-grade B2B Product Marketing Writer.
+        Your task is to generate a high-clarity, practitioner-level marketing asset
+        based ONLY on the INSIGHTS and STRUCTURE provided below.
+        
+        Do not add external knowledge.
+        Do not invent numbers, KPIs, improvements, benchmarks, or capabilities that do not explicitly appear in the INSIGHTS.
+        If you are not sure about the information, use the context and references to make a decision."""),
         HumanMessage(content=prompt)
     ]
     

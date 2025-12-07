@@ -4,14 +4,13 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { Navbar } from '@/components/Navbar'
-import { MultiSelect } from '@/components/MultiSelect'
 import { FileDropzone } from '@/components/FileDropzone'
 import { TextArea } from '@/components/TextArea'
 import { Button } from '@/components/Button'
 import { documentsAPI, ragAPI } from '@/lib/api'
 import { isAuthenticated } from '@/lib/auth'
 
-const KEYWORD_OPTIONS = [
+const USE_CASE_OPTIONS = [
   'cybersecurity',
   'network security',
   'sysadmin',
@@ -21,13 +20,16 @@ const KEYWORD_OPTIONS = [
 
 export default function HomePage() {
   const router = useRouter()
-  const [selectedKeywords, setSelectedKeywords] = useState<string[]>([])
-  const [marketingText, setMarketingText] = useState('')
+  const [selectedUseCases, setSelectedUseCases] = useState<string[]>([])
+  const [contextText, setContextText] = useState('')
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<Record<string, string>>({})
   const [authChecked, setAuthChecked] = useState(false)
   const [hasToken, setHasToken] = useState(false)
+  const [tone, setTone] = useState<string>('')
+  const [assetType, setAssetType] = useState<string>('')
+  const [icp, setIcp] = useState<string>('')
 
   // Check authentication only after component mounts
   useEffect(() => {
@@ -74,13 +76,28 @@ export default function HomePage() {
 
   const handleProcess = async () => {
     // Validation
-    if (selectedKeywords.length === 0) {
-      alert('Please select or enter at least one keyword')
+    if (!tone) {
+      alert('Please select a tone')
       return
     }
 
-    if (!marketingText.trim()) {
-      alert('Please provide your request text')
+    if (!assetType.trim()) {
+      alert('Please select or enter an asset type')
+      return
+    }
+
+    if (!icp.trim()) {
+      alert('Please select or enter an ICP')
+      return
+    }
+
+    if (selectedUseCases.length === 0) {
+      alert('Please select or enter at least one use case')
+      return
+    }
+
+    if (!contextText.trim()) {
+      alert('Please provide your context')
       return
     }
 
@@ -88,8 +105,13 @@ export default function HomePage() {
 
     try {
       const response = await ragAPI.process(
-        selectedKeywords,
-        marketingText
+        selectedUseCases,
+        contextText,
+        {
+          tone,
+          assetType,
+          icp,
+        }
       )
       console.log('Response: ', response)
       // Open results in new tab
@@ -97,7 +119,7 @@ export default function HomePage() {
       window.open(resultsUrl, '_blank')
       
       // Reset form
-      setMarketingText('')
+      setContextText('')
     } catch (error: any) {
       console.error('Processing error:', error)
       alert(
@@ -135,8 +157,8 @@ export default function HomePage() {
               Refine Your Marketing Materials
             </h1>
             <p className="mt-2 text-gray-600">
-              Provide your request, select or enter keywords, and let AI enhance your
-              marketing content.
+              Provide your context, select or enter use cases, and let AI generate
+              a tailored marketing asset.
             </p>
           </div>
 
@@ -145,14 +167,14 @@ export default function HomePage() {
             {/* Your Request - Takes 2 columns */}
             <section className="bg-white rounded-lg shadow p-6 lg:col-span-2">
               <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                1. Your Request
+                1. Context
               </h2>
               <TextArea
-                label=""
+                label="Context"
                 rows={10}
-                value={marketingText}
-                onChange={(e) => setMarketingText(e.target.value)}
-                placeholder="Paste or write your marketing material here..."
+                value={contextText}
+                onChange={(e) => setContextText(e.target.value)}
+                placeholder="Describe the situation, pain points, or raw notes you want to turn into a marketing asset..."
               />
             </section>
 
@@ -204,21 +226,113 @@ export default function HomePage() {
             </section>
           </div>
 
-          {/* Section 2: Keywords (MultiSelect with Custom Input) */}
+          {/* Section 2: Tone, Asset Type, ICP */}
           <section className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              2. Keywords
+              2. Generation Settings
             </h2>
-            <MultiSelect
-              options={KEYWORD_OPTIONS}
-              selected={selectedKeywords}
-              onChange={setSelectedKeywords}
-              label=""
-              placeholder="Select or type keywords..."
-            />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Tone */}
+              <div>
+                <label
+                  htmlFor="tone"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Tone
+                </label>
+                <select
+                  id="tone"
+                  value={tone}
+                  onChange={(e) => setTone(e.target.value)}
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
+                >
+                  <option value="">Select tone...</option>
+                  <option value="manager">Manager</option>
+                  <option value="technical">Technical</option>
+                </select>
+              </div>
+
+              {/* Asset Type */}
+              <div>
+                <label
+                  htmlFor="assetType"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Asset Type
+                </label>
+                <input
+                  id="assetType"
+                  list="asset-type-options"
+                  value={assetType}
+                  onChange={(e) => setAssetType(e.target.value)}
+                  placeholder="Select or type asset type..."
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
+                />
+                <datalist id="asset-type-options">
+                  <option value="one-pager" />
+                  <option value="email" />
+                  <option value="landing page" />
+                  <option value="blog" />
+                </datalist>
+              </div>
+
+              {/* ICP */}
+              <div>
+                <label
+                  htmlFor="icp"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  ICP / Role
+                </label>
+                <input
+                  id="icp"
+                  list="icp-options"
+                  value={icp}
+                  onChange={(e) => setIcp(e.target.value)}
+                  placeholder="Select or type ICP..."
+                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
+                />
+                <datalist id="icp-options">
+                  <option value="Network & Security Operations" />
+                  <option value="Application & Service Delivery" />
+                  <option value="CIO" />
+                  <option value="CISO" />
+                  <option value="Risk and Complience" />
+                </datalist>
+              </div>
+            </div>
           </section>
 
-          {/* Section 3: Process Button */}
+          {/* Section 3: Use Cases (Multi-select with custom input) */}
+          <section className="bg-white rounded-lg shadow p-6">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">
+              3. Use Cases
+            </h2>
+            <p className="text-sm text-gray-600 mb-3">
+              Add the specific use cases, scenarios, or problems this asset should speak to.
+            </p>
+            <input
+              list="use-case-options"
+              value={selectedUseCases.join(', ')}
+              onChange={(e) =>
+                setSelectedUseCases(
+                  e.target.value
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean)
+                )
+              }
+              placeholder="Select or type use cases (comma-separated)..."
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
+            />
+            <datalist id="use-case-options">
+              {USE_CASE_OPTIONS.map((option) => (
+                <option key={option} value={option} />
+              ))}
+            </datalist>
+          </section>
+
+          {/* Section 4: Process Button */}
           <section className="bg-white rounded-lg shadow p-6">
             <Button
               variant="primary"

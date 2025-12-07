@@ -179,7 +179,7 @@ export default function ResultsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <h2 className="text-xl font-semibold text-gray-900">
-                Sources from Web Sources
+                Sources used to provide Asset
               </h2>
             </div>
             
@@ -226,18 +226,24 @@ export default function ResultsPage() {
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                             </svg>
                           )}
-                          {source.filename || 'Unknown Document'}
+                          {source.source === 'youtube' || source.doc_type === 'youtube_transcript'
+                            ? `YouTube: ${source.title || 'Unknown Video'}`
+                            : source.filename || 'Unknown Document'}
                         </h3>
                         
                         {/* Metadata Grid */}
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                          {/* Document Type */}
-                          {source.doc_type && (
-                            <div>
-                              <span className="font-medium text-gray-600">Document Type:</span>{' '}
-                              <span className="text-gray-700 capitalize">{source.doc_type.replace('_', ' ')}</span>
-                            </div>
-                          )}
+                          {/* Document Type (hidden for YouTube) */}
+                          {source.doc_type &&
+                            source.source !== 'youtube' &&
+                            source.doc_type !== 'youtube_transcript' && (
+                              <div>
+                                <span className="font-medium text-gray-600">Document Type:</span>{' '}
+                                <span className="text-gray-700 capitalize">
+                                  {source.doc_type.replace('_', ' ')}
+                                </span>
+                              </div>
+                            )}
                           {source.file_type && (
                             <div>
                               <span className="font-medium text-gray-600">File Type:</span>{' '}
@@ -355,9 +361,9 @@ export default function ResultsPage() {
                     
                     {/* Excerpt */}
                     <div className="mt-4 bg-white p-4 rounded-lg border-l-4 border-purple-500 shadow-inner">
-                      <p className="text-xs font-medium text-gray-500 mb-2">Content Excerpt:</p>
+                      <p className="text-xs font-medium text-gray-500 mb-2">Context Excerpt:</p>
                       <div className="text-sm text-gray-700 leading-relaxed">
-                        {source.snippet || source.text || 'No excerpt available'}
+                        {source.snippet || 'No excerpt available'}
                       </div>
                     </div>
                   </div>

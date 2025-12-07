@@ -29,7 +29,17 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const status = error.response?.status
+    const url = error.config?.url as string | undefined
+
+    // For 401s on non-auth endpoints, clear token and redirect to login.
+    // This avoids redirect loops when the user simply mistypes their password on /auth/login.
+    if (
+      status === 401 &&
+      url &&
+      !url.includes('/auth/login') &&
+      !url.includes('/auth/register')
+    ) {
       if (typeof window !== 'undefined') {
         localStorage.removeItem('auth_token')
         window.location.href = '/auth/login'
@@ -84,11 +94,23 @@ export const documentsAPI = {
 
 // RAG API
 export const ragAPI = {
-  process: async (backgrounds: string[], marketingText: string, templateOverride?: string) => {
+  process: async (
+    backgrounds: string[],
+    marketingText: string,
+    options?: {
+      tone?: string
+      assetType?: string
+      icp?: string
+      templateOverride?: string
+    }
+  ) => {
     const response = await apiClient.post('/rag/process', {
       backgrounds,
       marketing_text: marketingText,
-      template_override: templateOverride,
+      tone: options?.tone,
+      asset_type: options?.assetType,
+      icp: options?.icp,
+      template_override: options?.templateOverride,
     })
     return response.data
   },

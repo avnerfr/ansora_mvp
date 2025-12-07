@@ -7,6 +7,7 @@ from core.config import settings
 from sentence_transformers import SentenceTransformer
 import uuid
 import logging
+import types
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +40,36 @@ class VectorStore:
         self._embeddings = None
         self._cloud_embeddings = None
         
-        # Local Docker Qdrant (user documents)
+        # Single Qdrant client (cloud) for both user documents and summaries
         self.client = QdrantClient(
             url=settings.QDRANT_URL,
-            api_key=settings.QDRANT_API_KEY if settings.QDRANT_API_KEY else None
+            api_key=settings.QDRANT_API_KEY if settings.QDRANT_API_KEY else None,
         )
-        
-        # Cloud Qdrant (Reddit posts)
-        self.cloud_client = QdrantClient(
-            url="https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333",
-            api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.s53XfrTWp0MHokNbtLSx2ikhLdi9Miru2Q99NxACFo8"
-        )
+
+        # Backwards-compatibility shim: some LangChain Qdrant versions expect
+        # QdrantClient.search(), which was removed in newer qdrant-client
+        # versions in favor of query_points(). We provide a thin wrapper so
+        # retrievers work without pinning an old client version.
+        if not hasattr(self.client, "search"):
+            def _search(
+                client_self,
+                collection_name: str,
+                query_vector,
+                query_filter=None,
+                limit: int = 10,
+                with_payload: bool = True,
+                **kwargs,
+            ):
+                return client_self.query_points(
+                    collection_name=collection_name,
+                    query=query_vector,
+                    limit=limit,
+                    with_payload=with_payload,
+                    filter=query_filter,
+                    **kwargs,
+                )
+
+            self.client.search = types.MethodType(_search, self.client)
     
     def _get_shared_model(self):
         """Get or create the shared SentenceTransformer model instance."""
@@ -80,16 +100,8 @@ class VectorStore:
     
     @property
     def cloud_embeddings(self):
-        """Lazy-load SentenceTransformer for cloud Qdrant (uses shared model instance)."""
-        if self._cloud_embeddings is None:
-            try:
-                logger.info("Getting SentenceTransformer for cloud Qdrant...")
-                self._cloud_embeddings = self._get_shared_model()  # Use shared model instance
-                logger.info(f"✓ Using shared SentenceTransformer: {self._cloud_embeddings.get_sentence_embedding_dimension()}D")
-            except Exception as e:
-                logger.error(f"❌ Failed to get SentenceTransformer: {type(e).__name__}: {str(e)}")
-                self._cloud_embeddings = None
-        return self._cloud_embeddings
+        """Alias for embeddings when querying shared cloud collections."""
+        return self._get_shared_model()
     
     def get_collection_name(self, user_id: int) -> str:
         """Get the Qdrant collection name for a user."""
@@ -150,33 +162,29 @@ class VectorStore:
         return vector_store.as_retriever(search_kwargs={"k": k})
     
     def search_reddit_posts(self, query: str, k: int = 3) -> List[Document]:
-        """Search Reddit posts from cloud Qdrant database."""
+        """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
-            logger.info(f"🔍 Searching Reddit posts in cloud Qdrant, k={k}")
+            logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}")
             logger.info(f"Query text: '{query[:100]}...'")
             
             # Check if collection exists
             logger.info("Connecting to cloud Qdrant...")
-            collections = self.cloud_client.get_collections().collections
+            collections = self.client.get_collections().collections
             collection_names = [c.name for c in collections]
             logger.info(f"Available collections in cloud Qdrant: {collection_names}")
             
-            # Check for collection name - prioritize reddit_posts
-            collection_name_to_use = None
-            if "reddit_posts" in collection_names:
-                collection_name_to_use = "reddit_posts"
-                logger.info("✓ Found reddit_posts collection")
-            elif "reddit_yt_posts" in collection_names:
-                collection_name_to_use = "reddit_yt_posts"
-                logger.info("✓ Found reddit_yt_posts collection (includes Reddit + YouTube)")
-            else:
-                logger.warning("❌ Neither reddit_posts nor reddit_yt_posts collection found in cloud Qdrant")
-                logger.warning(f"Available collections: {collection_names}")
+            # Use the unified summaries collection
+            collection_name_to_use = "summaries_1_0"
+            if collection_name_to_use not in collection_names:
+                logger.warning(
+                    f"❌ summaries_1_0 collection not found in cloud Qdrant. "
+                    f"Available collections: {collection_names}"
+                )
                 return []
             
             # Get collection info
             try:
-                collection_info = self.cloud_client.get_collection(collection_name_to_use)
+                collection_info = self.client.get_collection(collection_name_to_use)
                 # Access vector size - handle different Qdrant client versions
                 try:
                     # Try standard access pattern
@@ -234,7 +242,7 @@ class VectorStore:
             
             # Search using direct Qdrant client API
             logger.info(f"Performing similarity search with k={k}...")
-            search_results = self.cloud_client.query_points(
+            search_results = self.client.query_points(
                 collection_name=collection_name_to_use,
                 query=query_vector,
                 limit=k,
@@ -248,8 +256,15 @@ class VectorStore:
                 # Log the payload to see what fields are available
                 logger.info(f"Point {i} payload keys: {list(point.payload.keys())}")
                 
-                # Extract text from payload
-                text = point.payload.get('text', '') or point.payload.get('content', '')
+                # Extract text from payload – prefer full text, then snippet/citation
+                payload = point.payload or {}
+                text = (
+                    payload.get("text")
+                    or payload.get("content")
+                    or payload.get("snippet")
+                    or payload.get("citation")
+                    or ""
+                )
                 
                 # Determine source type and doc type
                 source = point.payload.get("source", "unknown")
@@ -260,62 +275,52 @@ class VectorStore:
                     "source": source,
                     "doc_type": doc_type,
                     "score": point.score,  # Similarity score from Qdrant
-                    
+
+                    'citation': point.payload.get("citation"),                     
+                    'citation_start_time': point.payload.get("citation_start_time"),                     
+                    'icp_role_type': point.payload.get("icp_role_type"),                    
+                    'title': point.payload.get("title"), 
+                    'channel': point.payload.get("channel"), 
+                    'type': point.payload.get("type"),
+
+                    # Podcast-specific fields
+                    'episode_url': point.payload.get("episode_url"),
+                    'episode_number': point.payload.get("episode_number"), 
+                    'mp3_url': point.payload.get("mp3_url"),
+
+
                     # YouTube-specific fields
-                    "channel": point.payload.get("channel"),
-                    "title": point.payload.get("title"),
-                    "video_url": point.payload.get("video_url"),
-                    "start_sec": point.payload.get("start_sec"),
-                    "end_sec": point.payload.get("end_sec"),
-                    "level": point.payload.get("level"),
-                    
+                    'video_url': point.payload.get("video_url"),
+
+
                     # Reddit-specific fields
-                    "subreddit": point.payload.get("subreddit"),
-                    "flair_text": point.payload.get("flair_text"),
-                    "thread_url": point.payload.get("thread_url"),
-                    "comment_url": point.payload.get("comment_url"),
-                    "parent_comment_url": point.payload.get("parent_comment_url"),
-                    "thread_index": point.payload.get("thread_index"),
-                    "reply_index": point.payload.get("reply_index"),
-                    "author_fullname": point.payload.get("author_fullname"),
-                    "author": point.payload.get("author_fullname") or point.payload.get("author"),
-                    "created_utc": point.payload.get("created_utc"),
-                    "timestamp": point.payload.get("created_utc") or point.payload.get("timestamp"),
-                    "ups": point.payload.get("ups"),
-                    "type": doc_type,  # Use doc_type as type for backward compatibility
+                    'subreddit': point.payload.get("subreddit"),
+                    'author_fullname': point.payload.get("author_fullname"),
+                    'level': point.payload.get("level"),
+                    'created_utc': point.payload.get("created_utc"),
+                    'thread_url': point.payload.get("thread_url"),
+                    'comment_url': point.payload.get("comment_url"),
+                    'ups': point.payload.get("ups"),
+                    'flair_text': point.payload.get("flair_text"),
+
                 }
                 
                 # Generate appropriate filename based on doc_type
-                if doc_type == "youtube_transcript":
-                    filename = f"YouTube: {point.payload.get('title', 'Unknown Video')}"
-                    if point.payload.get("start_sec") is not None:
-                        filename += f" ({point.payload.get('start_sec')}s - {point.payload.get('end_sec', 'end')}s)"
+                if doc_type == "yt_summary":
+                    filename = f"YouTube: {point.payload.get('title', '')}"
                 elif doc_type == "reddit_post":
                     filename = f"Reddit Post: {point.payload.get('title', 'Untitled')}"
+                elif doc_type == "reddit_thread":
+                    filename = f"Reddit Thread: {point.payload.get('title', 'Untitled')}"
                 elif doc_type == "reddit_comment":
                     filename = f"Reddit Comment by {point.payload.get('author_fullname', 'Unknown')}"
+                elif doc_type == "podcast_summary":
+                    filename = f"Podcast Summary: {point.payload.get('title', 'Untitled')}"
                 else:
                     filename = f"{source.title()}: {doc_type.replace('_', ' ').title()}"
                 
                 metadata["filename"] = filename
 
-
-
-
-
-                # Create metadata - extract actual values from payload
-                #metadata = {
-                #    "source": "reddit",
-                #    "subreddit": point.payload.get('subreddit'),
-                #    "author": point.payload.get('author'),
-                #    "type": point.payload.get('type'),  # ✅ Fixed: get actual value
-                #    "text": text,
-                #    "thread_url": url,
-                #    "timestamp": point.payload.get('timestamp'),
-                #    "score": point.score,
-                #    "filename": f"Reddit: {point.payload.get('author', 'Unknown')}",
-                #}
-                
                 # Log what we extracted
                 logger.info(f"Extracted metadata: source={source}, doc_type={doc_type}, filename={filename}, score={point.score}")
                 

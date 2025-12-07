@@ -10,7 +10,13 @@ class Settings:
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION_HOURS: int = 24
     OPENAI_API_KEY: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
-    QDRANT_URL: str = field(default_factory=lambda: os.getenv("QDRANT_URL", "http://qdrant:6333"))
+    # Default to the cloud Qdrant endpoint; can be overridden via QDRANT_URL env var.
+    QDRANT_URL: str = field(
+        default_factory=lambda: os.getenv(
+            "QDRANT_URL",
+            "https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333",
+        )
+    )
     QDRANT_API_KEY: str = field(default_factory=lambda: os.getenv("QDRANT_API_KEY", ""))
     ALLOWED_ORIGINS: str = field(default_factory=lambda: os.getenv("ALLOWED_ORIGINS", "http://localhost:3000"))
     STORAGE_PATH: str = field(default_factory=lambda: os.getenv("STORAGE_PATH", "./storage"))

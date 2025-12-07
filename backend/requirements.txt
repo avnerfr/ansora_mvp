@@ -4,7 +4,8 @@ uvicorn==0.24.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
-pydantic  # Removed [email] extra to save space
+pydantic
+email-validator>=2.0.0  # Required for EmailStr validation (lightweight, ~1-2MB)
 sqlalchemy==2.0.23
 aiosqlite==0.19.0
 # LangChain - minimal install (only what we need)
