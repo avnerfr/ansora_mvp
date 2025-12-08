@@ -319,7 +319,7 @@ async def process_rag(
     retrieval_prompt = retrieval_prompt.replace("{{documents}}", documents_summary)
     retrieval_prompt = retrieval_prompt.replace("{{backgrounds}}", backgrounds_str)
 
-    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$retrieval_prompt")
     logger.info(retrieval_prompt)
     logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
     retrieval_query = marketing_text
@@ -344,10 +344,10 @@ async def process_rag(
     # Step 2: Retrieve documents from vector DB using the optimized query
     # --------------------------------------------------
     logger.info("Retrieving relevant documents from vector store...")
-    user_docs = []
-    reddit_docs = []
+    user_docs: list[Any] = []
+    external_docs: list[Any] = []
     
-    # Search user's uploaded documents (local Qdrant)
+    # Search user's uploaded documents (local Qdrant) – used for retrieval & prompt context
     try:
         retriever = vector_store.get_retriever(user_id, k=3)
         logger.info(f"Retriever created for user_{user_id}_documents collection")
@@ -365,23 +365,20 @@ async def process_rag(
     except Exception as e:
         logger.warning(f"⚠ Error retrieving user documents: {type(e).__name__}: {str(e)}")
     
-    # Search Reddit posts (cloud Qdrant)
+    # Optional external vector search (e.g., YouTube/Reddit/Podcasts) – used ONLY for references,
+    # not for the prompt context. This preserves web insights in the Sources panel without
+    # polluting the guarded RAG context that must be based on user-provided documents.
     try:
-        logger.info("Searching Reddit posts from cloud Qdrant...")
-        reddit_docs = vector_store.search_reddit_posts(retrieval_query, k=10)
-        logger.info(f"✓ Retrieved {len(reddit_docs)} Reddit posts")
-        
-        # Log Reddit post details
-        for i, doc in enumerate(reddit_docs, 1):
-            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
-            logger.info(f"  Reddit Post {i}: {metadata.get('author', 'Unknown')} "
-                       f"(content length: {len(doc.page_content)} chars)")
+        logger.info("Searching external sources (YouTube/Reddit/Podcasts) from cloud Qdrant for references...")
+        external_docs = vector_store.search_reddit_posts(retrieval_query, k=10)
+        logger.info(f"✓ Retrieved {len(external_docs)} external reference documents")
     except Exception as e:
-        logger.warning(f"⚠ Error retrieving Reddit posts: {type(e).__name__}: {str(e)}")
-    
-    # Combine results: user docs + Reddit posts
-    retrieved_docs = user_docs + reddit_docs
-    logger.info(f"✓ Total combined sources: {len(retrieved_docs)} ({len(user_docs)} user docs + {len(reddit_docs)} Reddit posts)")
+        logger.warning(f"⚠ Error retrieving external reference documents: {type(e).__name__}: {str(e)}")
+        external_docs = []
+
+    # For RAG context, use only user-uploaded documents (no external sources)
+    retrieved_docs = user_docs
+    logger.info(f"✓ Total context sources: {len(retrieved_docs)} user documents (excluding external references)")
     
     # Format context from retrieved documents
     logger.info("Formatting context from retrieved documents...")
@@ -470,10 +467,12 @@ async def process_rag(
         logger.error(f"✗ Error calling LLM: {type(e).__name__}: {str(e)}")
         raise
     
-    # Format sources
+    # Format sources – expose only external references (YouTube/Reddit/Podcasts).
+    # User-uploaded documents are intentionally NOT surfaced here; they are only
+    # used to build the RAG context passed to the LLM in the prompt.
     logger.info("Formatting sources...")
-    sources = format_sources(retrieved_docs)
-    logger.info(f"✓ Formatted {len(sources)} sources")
+    sources = format_sources(external_docs)
+    logger.info(f"✓ Formatted {len(sources)} external sources (user-uploaded documents are used only in prompt context)")
     
     logger.info("=== RAG Pipeline Completed Successfully ===")
     return refined_text, sources
