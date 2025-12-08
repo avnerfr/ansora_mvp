@@ -294,9 +294,6 @@ async def process_rag(
 
         doc_parts: list[str] = []
         for i, doc in enumerate(pre_docs, 1):
-            logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-            logger.info(doc)
-            logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
             meta = doc.metadata if hasattr(doc, "metadata") else {}
             filename = meta.get("filename", f"Document {i}")
             text = doc.page_content if hasattr(doc, "page_content") else str(doc)
@@ -319,7 +316,7 @@ async def process_rag(
     retrieval_prompt = retrieval_prompt.replace("{{documents}}", documents_summary)
     retrieval_prompt = retrieval_prompt.replace("{{backgrounds}}", backgrounds_str)
 
-    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$retrieval_prompt")
+    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT")
     logger.info(retrieval_prompt)
     logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
     retrieval_query = marketing_text
