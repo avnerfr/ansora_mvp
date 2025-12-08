@@ -51,7 +51,7 @@ class VectorStore:
         # versions in favor of query_points(). We provide a thin wrapper so
         # retrievers work without pinning an old client version.
         if not hasattr(self.client, "search"):
-            def _search(
+            def _search(  # type: ignore[override]
                 client_self,
                 collection_name: str,
                 query_vector,
@@ -60,15 +60,33 @@ class VectorStore:
                 with_payload: bool = True,
                 **kwargs,
             ):
-                return client_self.query_points(
+                """
+                Compatibility wrapper for older LangChain QdrantVectorStore, which
+                expects `QdrantClient.search(...)` to exist and return an iterable
+                of ScoredPoint objects (each having `.payload`, `.id`, `.score`, …).
+
+                Newer `qdrant-client` versions removed `.search` in favor of
+                `.query_points`, which returns a `ScoredPoint` collection object
+                with a `.points` list. This shim adapts the old call signature to
+                the new client API and always returns a list of points.
+                """
+                res = client_self.query_points(
                     collection_name=collection_name,
                     query=query_vector,
+                    query_filter=query_filter,
                     limit=limit,
                     with_payload=with_payload,
-                    filter=query_filter,
                     **kwargs,
                 )
+                # qdrant-client>=1.0 returns a response object with `.points`
+                if hasattr(res, "points") and isinstance(res.points, list):
+                    return res.points
+                # Some client versions may already return a list/tuple of points
+                if isinstance(res, (list, tuple)):
+                    return list(res)
+                return res
 
+            # Monkey‑patch client.search so that LangChain can call it
             self.client.search = types.MethodType(_search, self.client)
     
     def _get_shared_model(self):
@@ -280,6 +298,7 @@ class VectorStore:
                     'citation_start_time': point.payload.get("citation_start_time"),                     
                     'icp_role_type': point.payload.get("icp_role_type"),                    
                     'title': point.payload.get("title"), 
+                    'description': point.payload.get("description"),
                     'channel': point.payload.get("channel"), 
                     'type': point.payload.get("type"),
 

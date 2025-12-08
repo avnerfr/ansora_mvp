@@ -154,6 +154,7 @@ class SourceItem(BaseModel):
     start_sec: Optional[float] = None
     end_sec: Optional[float] = None
     level: Optional[int] = None
+    description: Optional[str] = None
 
     # Podcast-specific and citation fields
     episode_url: Optional[str] = None

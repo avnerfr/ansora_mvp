@@ -294,6 +294,13 @@ export default function ResultsPage() {
                               <span className="text-gray-700">{source.channel}</span>
                             </div>
                           )}
+                          {('youtube' === source.source || source.doc_type === 'youtube_transcript' || source.doc_type === 'yt_summary') &&
+                            source.description && (
+                              <div className="md:col-span-2">
+                                <span className="font-medium text-gray-600">Description:</span>{' '}
+                                <span className="text-gray-700">{source.description}</span>
+                              </div>
+                            )}
                           {source.start_sec !== undefined && source.start_sec !== null && (
                             <div>
                               <span className="font-medium text-gray-600">Timestamp:</span>{' '}

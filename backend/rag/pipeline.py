@@ -102,6 +102,23 @@ No extra commentary.
 From references provide all available information.
 """.strip()
 
+VECTOR_DB_RETREIVAL_PROMPT = """
+You are a helpful assistant that retrieves information from a vector database.
+You are given a query and a list of documents.
+You need to retrieve the most relevant documents from the list of documents.
+You need to return the most relevant documents from the list of documents.
+this is the user query: {{user_provided_text}}
+this is the list of documents: {{documents}}
+this is the context of the documents: {{backgrounds}}
+
+Output: one short retrieval query (1-3 sentences) that keeps only:
+ - entities
+ - time range
+ - domain keywords
+ - constraints (jurisdiction, product, tech stack, etc.)
+
+"""
+
 
 
 def _convert_timestamp(value):
@@ -213,6 +230,7 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             "start_sec": _safe_float(metadata.get("start_sec")),
             "end_sec": _safe_float(metadata.get("end_sec")),
             "level": _safe_int(metadata.get("level")),
+            "description": _safe_str(metadata.get("description")),
             
             # Podcast-specific and citation fields
             "episode_url": _safe_str(metadata.get("episode_url")),
@@ -248,8 +266,8 @@ async def process_rag(
     logger.info(f"Context text length: {len(marketing_text)} chars")
     logger.info(f"Context text preview: {marketing_text[:100]}...")
     logger.info(f"Tone: {tone}, Asset Type: {asset_type}, ICP: {icp}")
-    logger.debug(f"Full context text: {marketing_text}")
-    logger.debug(f"Template: {template}")
+    logger.info(f"Full context text: {marketing_text}")
+    logger.info(f"Template: {template}")
     
     # Use default template if none provided
     if template is None:
@@ -257,8 +275,74 @@ async def process_rag(
         logger.info("Using default template")
     else:
         logger.info("Using custom/override template")
-    
-    # Get retriever for user's documents
+
+    # --------------------------------------------------
+    # Step 1: Build optimized retrieval query for vector DB using LLM,
+    #         with {{documents}} populated from user's uploaded documents.
+    # --------------------------------------------------
+    logger.info("Building optimized retrieval query for vector DB...")
+    backgrounds_str = ", ".join(backgrounds)
+
+    documents_summary = ""
+    try:
+        # Pre-fetch a large set of user documents (independent of the current query)
+        # just to build the {{documents}} field for the retrieval prompt.
+        # We intentionally do NOT condition this on marketing_text so that
+        # all uploaded content is available to the retrieval LLM.
+        pre_retriever = vector_store.get_retriever(user_id, k=1000)
+        pre_docs = pre_retriever.get_relevant_documents("")  # neutral query → pull as many chunks as possible
+
+        doc_parts: list[str] = []
+        for i, doc in enumerate(pre_docs, 1):
+            logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+            logger.info(doc)
+            logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+            meta = doc.metadata if hasattr(doc, "metadata") else {}
+            filename = meta.get("filename", f"Document {i}")
+            text = doc.page_content if hasattr(doc, "page_content") else str(doc)
+            # Keep up to 1000 chars per document to avoid overlong prompts
+            doc_parts.append(f"[{filename}]: {text[:1000]}")
+
+        documents_summary = "\n\n".join(doc_parts)
+        logger.info(
+            f"✓ Collected {len(pre_docs)} documents for retrieval prompt "
+            f"(summary length={len(documents_summary)} chars)"
+        )
+    except Exception as e:
+        logger.warning(
+            f"⚠ Error collecting documents for retrieval prompt; "
+            f"{{documents}} will be empty: {type(e).__name__}: {str(e)}"
+        )
+
+    retrieval_prompt = VECTOR_DB_RETREIVAL_PROMPT
+    retrieval_prompt = retrieval_prompt.replace("{{user_provided_text}}", marketing_text)
+    retrieval_prompt = retrieval_prompt.replace("{{documents}}", documents_summary)
+    retrieval_prompt = retrieval_prompt.replace("{{backgrounds}}", backgrounds_str)
+
+    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    logger.info(retrieval_prompt)
+    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    retrieval_query = marketing_text
+    try:
+        retrieval_llm = ChatOpenAI(
+            model_name="gpt-4",
+            temperature=0.0,
+            openai_api_key=settings.OPENAI_API_KEY,
+        )
+        rq_messages = [HumanMessage(content=retrieval_prompt)]
+        rq_response = await retrieval_llm.ainvoke(rq_messages)
+        retrieval_query = (rq_response.content or marketing_text).strip()
+        logger.info(f"✓ Retrieval query built (length={len(retrieval_query)} chars)")
+        logger.debug(f"Retrieval query:\n{retrieval_query}")
+    except Exception as e:
+        logger.warning(
+            f"⚠ Error building retrieval query, falling back to full context: "
+            f"{type(e).__name__}: {str(e)}"
+        )
+
+    # --------------------------------------------------
+    # Step 2: Retrieve documents from vector DB using the optimized query
+    # --------------------------------------------------
     logger.info("Retrieving relevant documents from vector store...")
     user_docs = []
     reddit_docs = []
@@ -268,7 +352,7 @@ async def process_rag(
         retriever = vector_store.get_retriever(user_id, k=3)
         logger.info(f"Retriever created for user_{user_id}_documents collection")
         
-        user_docs = retriever.get_relevant_documents(marketing_text)
+        user_docs = retriever.get_relevant_documents(retrieval_query)
         logger.info(f"✓ Retrieved {len(user_docs)} user documents")
         
         # Log document details
@@ -284,7 +368,7 @@ async def process_rag(
     # Search Reddit posts (cloud Qdrant)
     try:
         logger.info("Searching Reddit posts from cloud Qdrant...")
-        reddit_docs = vector_store.search_reddit_posts(marketing_text, k=10)
+        reddit_docs = vector_store.search_reddit_posts(retrieval_query, k=10)
         logger.info(f"✓ Retrieved {len(reddit_docs)} Reddit posts")
         
         # Log Reddit post details
@@ -317,7 +401,6 @@ async def process_rag(
     )
     
     # Format backgrounds
-    backgrounds_str = ", ".join(backgrounds)
     logger.info(f"Backgrounds / use cases string: {backgrounds_str}")
     
     # Build prompt - replace template variables
