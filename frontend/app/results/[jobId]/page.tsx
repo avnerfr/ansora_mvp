@@ -80,6 +80,9 @@ export default function ResultsPage() {
     )
   }
 
+  const isPodcast = (source: any) =>
+    source.doc_type === 'podcast_summary' || source.type === 'podcast_summary'
+
   return (
     <div className="min-h-screen bg-gray-50" suppressHydrationWarning>
       <Navbar />
@@ -217,26 +220,33 @@ export default function ResultsPage() {
                             <svg className="w-5 h-5 text-orange-500 mr-2" fill="currentColor" viewBox="0 0 24 24">
                               <path d="M12 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0zm5.01 4.744c.688 0 1.25.561 1.25 1.249a1.25 1.25 0 0 1-2.498.056l-2.597-.547-.8 3.747c1.824.07 3.48.632 4.674 1.488.308-.309.73-.491 1.207-.491.968 0 1.754.786 1.754 1.754 0 .716-.435 1.333-1.01 1.614a3.111 3.111 0 0 1 .042.52c0 2.694-3.13 4.87-7.004 4.87-3.874 0-7.004-2.176-7.004-4.87 0-.183.015-.366.043-.534A1.748 1.748 0 0 1 4.028 12c0-.968.786-1.754 1.754-1.754.463 0 .898.196 1.207.49 1.207-.883 2.878-1.43 4.744-1.487l.885-4.182a.342.342 0 0 1 .14-.197.35.35 0 0 1 .238-.042l2.906.617a1.214 1.214 0 0 1 1.108-.701zM9.25 12C8.561 12 8 12.562 8 13.25c0 .687.561 1.248 1.25 1.248.687 0 1.248-.561 1.248-1.249 0-.688-.561-1.249-1.249-1.249zm5.5 0c-.687 0-1.248.561-1.248 1.25 0 .687.561 1.248 1.249 1.248.688 0 1.249-.561 1.249-1.249 0-.687-.562-1.249-1.25-1.249zm-5.466 3.99a.327.327 0 0 0-.231.094.33.33 0 0 0 0 .463c.842.842 2.484.913 2.961.913.477 0 2.105-.056 2.961-.913a.361.361 0 0 0 .029-.463.33.33 0 0 0-.464 0c-.547.533-1.684.73-2.512.73-.828 0-1.979-.196-2.512-.73a.326.326 0 0 0-.232-.095z"/>
                             </svg>
-                          ) : source.source === 'youtube' || source.doc_type === 'youtube_transcript' ? (
+                          ) : source.source === 'youtube' || source.doc_type === 'youtube_transcript' || source.doc_type === 'yt_summary' ? (
                             <svg className="w-5 h-5 text-red-500 mr-2" fill="currentColor" viewBox="0 0 24 24">
                               <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                            </svg>
+                          ) : isPodcast(source) ? (
+                            <svg className="w-5 h-5 text-pink-500 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M12 1a9 9 0 00-9 9c0 4.418 3.134 8.063 7.234 8.838L10 23l4-1-0.234-4.162C17.866 18.063 21 14.418 21 10a9 9 0 00-9-9zm0 4a3 3 0 110 6 3 3 0 010-6z" />
                             </svg>
                           ) : (
                             <svg className="w-5 h-5 text-purple-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                             </svg>
                           )}
-                          {source.source === 'youtube' || source.doc_type === 'youtube_transcript'
+                          {source.source === 'youtube' || source.doc_type === 'youtube_transcript' || source.doc_type === 'yt_summary'
                             ? `YouTube: ${source.title || 'Unknown Video'}`
-                            : source.filename || 'Unknown Document'}
+                            : isPodcast(source)
+                              ? source.filename || 'Podcast'
+                              : source.filename || 'Unknown Document'}
                         </h3>
                         
                         {/* Metadata Grid */}
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                          {/* Document Type (hidden for YouTube) */}
+                          {/* Document Type (hidden for YouTube and Podcasts) */}
                           {source.doc_type &&
                             source.source !== 'youtube' &&
-                            source.doc_type !== 'youtube_transcript' && (
+                            source.doc_type !== 'youtube_transcript' &&
+                            !isPodcast(source) && (
                               <div>
                                 <span className="font-medium text-gray-600">Document Type:</span>{' '}
                                 <span className="text-gray-700 capitalize">
@@ -278,7 +288,7 @@ export default function ResultsPage() {
                           )}
                           
                           {/* YouTube-specific fields */}
-                          {source.channel && (
+                          {source.channel && !isPodcast(source) && (
                             <div>
                               <span className="font-medium text-gray-600">Channel:</span>{' '}
                               <span className="text-gray-700">{source.channel}</span>
@@ -292,6 +302,25 @@ export default function ResultsPage() {
                                 {source.end_sec && ` - ${Math.floor(source.end_sec / 60)}:${(source.end_sec % 60).toFixed(0).padStart(2, '0')}`}
                               </span>
                             </div>
+                          )}
+
+                          {/* Podcast-specific fields */}
+                          {isPodcast(source) && (
+                            <>
+                              {source.channel && (
+                                <div>
+                                  <span className="font-medium text-gray-600">Podcast Series:</span>{' '}
+                                  <span className="text-gray-700">{source.channel}</span>
+                                </div>
+                              )}
+                              {/* Episode title is already surfaced in the main heading; no extra Episode: line */}
+                              {source.episode_number !== undefined && source.episode_number !== null && (
+                                <div>
+                                  <span className="font-medium text-gray-600">Episode #:</span>{' '}
+                                  <span className="text-gray-700">{source.episode_number}</span>
+                                </div>
+                              )}
+                            </>
                           )}
                           
                           {/* Date */}
@@ -355,7 +384,40 @@ export default function ResultsPage() {
                               Watch Video{source.start_sec && ` (${Math.floor(source.start_sec / 60)}:${(source.start_sec % 60).toFixed(0).padStart(2, '0')})`}
                             </a>
                           )}
+                          {/* Podcast episode URL */}
+                          {isPodcast(source) && source.episode_url && (
+                            <a
+                              href={source.episode_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center text-sm font-medium text-pink-600 hover:text-pink-800 hover:underline"
+                            >
+                              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                              </svg>
+                              View Podcast
+                            </a>
+                          )}
                         </div>
+
+                        {/* Podcast MP3 player */}
+                        {isPodcast(source) && source.mp3_url && (
+                          <div className="mt-3">
+                            <p className="text-xs font-medium text-gray-600 mb-1">Play Podcast Excerpt:</p>
+                            <audio
+                              controls
+                              className="w-full max-w-md"
+                              src={source.mp3_url}
+                              onLoadedMetadata={(e) => {
+                                const audio = e.currentTarget as HTMLAudioElement
+                                const start = Number(source.citation_start_time ?? 0)
+                                if (!Number.isNaN(start) && start > 0 && start < (audio.duration || Infinity)) {
+                                  audio.currentTime = start
+                                }
+                              }}
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
                     
@@ -407,4 +469,3 @@ export default function ResultsPage() {
     </div>
   )
 }
-

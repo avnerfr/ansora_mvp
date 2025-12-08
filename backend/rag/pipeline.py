@@ -3,7 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 from rag.vectorstore import vector_store
 from core.config import settings
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 
 # Configure logging
@@ -114,6 +114,7 @@ def _convert_timestamp(value):
         return value
     return None
 
+
 def _safe_int(value):
     """Safely convert value to int, return None if conversion fails."""
     if value is None:
@@ -122,6 +123,7 @@ def _safe_int(value):
         return int(value)
     except (ValueError, TypeError):
         return None
+
 
 def _safe_float(value):
     """Safely convert value to float, return None if conversion fails."""
@@ -132,6 +134,7 @@ def _safe_float(value):
     except (ValueError, TypeError):
         return None
 
+
 def _safe_str(value):
     """Safely convert value to string, return None if value is None or empty."""
     if value is None:
@@ -139,6 +142,18 @@ def _safe_str(value):
     if isinstance(value, str):
         return value if value else None
     return str(value)
+
+
+def _fix_mojibake(value: Optional[str]) -> Optional[str]:
+    """
+    Fix common UTF-8/Windows-1252 mojibake issues (e.g., â€“ → –).
+    This is mainly for titles coming from external sources like podcasts/YouTube.
+    """
+    if not value:
+        return value
+    fixed = value.replace("â€“", "–")
+    # Add more replacements here if needed in the future
+    return fixed
 
 
 def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
@@ -159,6 +174,7 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
         # Prepare filename
         filename = metadata.get("filename")
         filename_str = str(filename) if filename and filename != "Unknown" else "Unknown"
+        filename_str = _fix_mojibake(filename_str)
         
         source = {
             "snippet": (content[:500] if len(content) > 500 else content) or "",
@@ -174,7 +190,7 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             "doc_id": str(metadata.get("file_id") or metadata.get("doc_id") or ""),
             "file_id": _safe_int(metadata.get("file_id")),
             
-            # Reddit-specific fields (can be None) - ensure proper types
+            # Reddit-specific fields
             "subreddit": _safe_str(metadata.get("subreddit")),
             "author": _safe_str(metadata.get("author") or metadata.get("author_fullname")),
             "author_fullname": _safe_str(metadata.get("author_fullname")),
@@ -190,13 +206,21 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             "created_utc": _convert_timestamp(metadata.get("created_utc")),
             "type": _safe_str(metadata.get("type") or doc_type),
             
-            # YouTube-specific fields (can be None) - ensure proper types
-            "channel": _safe_str(metadata.get("channel")),
-            "title": _safe_str(metadata.get("title")),
+            # YouTube-specific fields
+            "channel": _fix_mojibake(_safe_str(metadata.get("channel"))),
+            "title": _fix_mojibake(_safe_str(metadata.get("title"))),
             "video_url": _safe_str(metadata.get("video_url")),
             "start_sec": _safe_float(metadata.get("start_sec")),
             "end_sec": _safe_float(metadata.get("end_sec")),
             "level": _safe_int(metadata.get("level")),
+            
+            # Podcast-specific and citation fields
+            "episode_url": _safe_str(metadata.get("episode_url")),
+            "episode_number": _safe_int(metadata.get("episode_number")),
+            "mp3_url": _safe_str(metadata.get("mp3_url")),
+            "citation": _safe_str(metadata.get("citation")),
+            "citation_start_time": _safe_float(metadata.get("citation_start_time")),
+            "icp_role_type": _safe_str(metadata.get("icp_role_type")),
         }
         
         sources.append(source)
@@ -370,4 +394,3 @@ async def process_rag(
     
     logger.info("=== RAG Pipeline Completed Successfully ===")
     return refined_text, sources
-

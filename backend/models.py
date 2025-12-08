@@ -155,6 +155,14 @@ class SourceItem(BaseModel):
     end_sec: Optional[float] = None
     level: Optional[int] = None
 
+    # Podcast-specific and citation fields
+    episode_url: Optional[str] = None
+    episode_number: Optional[int] = None
+    mp3_url: Optional[str] = None
+    citation: Optional[str] = None
+    citation_start_time: Optional[float] = None
+    icp_role_type: Optional[str] = None
+
 
 class RAGResultResponse(BaseModel):
     job_id: str
@@ -162,4 +170,3 @@ class RAGResultResponse(BaseModel):
     sources: List[SourceItem]
     original_request: Optional[str] = None
     topics: Optional[List[str]] = None
-
