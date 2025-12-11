@@ -22,14 +22,15 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - JWT_SECRET=${JWT_SECRET:-change-this-secret-key}
+      - JWT_SECRET=${JWT_SECRET}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # Use QDRANT_URL from host/.env instead of hardcoded Docker URL
-      - QDRANT_URL=${QDRANT_URL}
+      - QDRANT_URL=https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - STORAGE_PATH=/app/storage
       - ALLOWED_ORIGINS=http://localhost:3000
     volumes:
+      - ./backend:/app  # Mount code directory
       - backend_storage:/app/storage
       - backend_db:/app/db
     depends_on:

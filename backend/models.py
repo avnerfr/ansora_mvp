@@ -132,11 +132,33 @@ class SourceItem(BaseModel):
     file_id: Optional[int] = None
     text: Optional[str] = None
     
+    # Common fields across all document types (new structure)
+    citation: Optional[str] = None
+    citation_start_time: Optional[float] = None
+    icp_role_type: Optional[str] = None
+    title: Optional[str] = None
+    channel: Optional[str] = None
+    type: Optional[str] = None
+    
+    # Podcast-specific fields
+    episode_url: Optional[str] = None
+    episode_number: Optional[int] = None
+    mp3_url: Optional[str] = None
+    
     # Reddit-specific fields
+    selftext: Optional[str] = None
+    thread_author: Optional[str] = None
     subreddit: Optional[str] = None
+    thread_url: Optional[str] = None
+    detailed_explanation: Optional[str] = Field(None, alias='detailed-explanation')
+    
+    # YouTube-specific fields
+    video_url: Optional[str] = None
+    description: Optional[str] = None
+    
+    # Legacy fields (for backward compatibility)
     author: Optional[str] = None
     author_fullname: Optional[str] = None
-    thread_url: Optional[str] = None
     comment_url: Optional[str] = None
     parent_comment_url: Optional[str] = None
     thread_index: Optional[int] = None
@@ -145,24 +167,12 @@ class SourceItem(BaseModel):
     ups: Optional[int] = None
     timestamp: Optional[str] = None
     created_utc: Optional[str] = None
-    type: Optional[str] = None
-    
-    # YouTube-specific fields
-    channel: Optional[str] = None
-    title: Optional[str] = None
-    video_url: Optional[str] = None
     start_sec: Optional[float] = None
     end_sec: Optional[float] = None
     level: Optional[int] = None
-    description: Optional[str] = None
-
-    # Podcast-specific and citation fields
-    episode_url: Optional[str] = None
-    episode_number: Optional[int] = None
-    mp3_url: Optional[str] = None
-    citation: Optional[str] = None
-    citation_start_time: Optional[float] = None
-    icp_role_type: Optional[str] = None
+    
+    class Config:
+        populate_by_name = True
 
 
 class RAGResultResponse(BaseModel):

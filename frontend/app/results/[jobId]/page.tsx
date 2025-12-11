@@ -261,6 +261,22 @@ export default function ResultsPage() {
                             </div>
                           )}
                           
+                          {/* Common fields across document types */}
+                          {source.icp_role_type && (
+                            <div>
+                              <span className="font-medium text-gray-600">ICP Role:</span>{' '}
+                              <span className="text-gray-700">{source.icp_role_type}</span>
+                            </div>
+                          )}
+                          {source.citation_start_time !== undefined && source.citation_start_time !== null && (
+                            <div>
+                              <span className="font-medium text-gray-600">Citation Time:</span>{' '}
+                              <span className="text-gray-700">
+                                {Math.floor(source.citation_start_time / 60)}:{(source.citation_start_time % 60).toFixed(0).padStart(2, '0')}
+                              </span>
+                            </div>
+                          )}
+                          
                           {/* Reddit-specific fields */}
                           {source.subreddit && (
                             <div>
@@ -268,10 +284,10 @@ export default function ResultsPage() {
                               <span className="text-gray-700">r/{source.subreddit}</span>
                             </div>
                           )}
-                          {source.author && (
+                          {(source.thread_author || source.author) && (
                             <div>
                               <span className="font-medium text-gray-600">Author:</span>{' '}
-                              <span className="text-gray-700">{source.author}</span>
+                              <span className="text-gray-700">{source.thread_author || source.author}</span>
                             </div>
                           )}
                           {source.flair_text && (
@@ -346,6 +362,32 @@ export default function ResultsPage() {
                             </div>
                           )}
                         </div>
+                        
+                        {/* Additional detailed explanation sections */}
+                        {source.detailed_explanation && (
+                          <div className="mt-3 p-3 bg-blue-50 rounded border border-blue-200">
+                            <p className="text-xs font-medium text-gray-600 mb-1">Detailed Explanation:</p>
+                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                              {source.detailed_explanation}
+                            </p>
+                          </div>
+                        )}
+                        {source.selftext && (
+                          <div className="mt-3 p-3 bg-orange-50 rounded border border-orange-200">
+                            <p className="text-xs font-medium text-gray-600 mb-1">Post Text:</p>
+                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                              {source.selftext}
+                            </p>
+                          </div>
+                        )}
+                        {source.citation && (
+                          <div className="mt-3 p-3 bg-purple-50 rounded border border-purple-200">
+                            <p className="text-xs font-medium text-gray-600 mb-1">Citation:</p>
+                            <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                              {source.citation}
+                            </p>
+                          </div>
+                        )}
                         
                         {/* URL Links */}
                         <div className="mt-3 flex flex-wrap gap-3">

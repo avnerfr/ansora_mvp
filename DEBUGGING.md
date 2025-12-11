@@ -73,7 +73,7 @@ Logs are structured with different levels:
 - Details of each retrieved document
 - Context building
 - Prompt construction
-- LLM (GPT-4) initialization
+- LLM (GPT-5) initialization
 - LLM API call and response
 - Source formatting
 - Final output

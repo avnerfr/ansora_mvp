@@ -66,9 +66,54 @@ tone_rules = {
 """,
 }
 
+SYSTEM_PROMPT = """
+You are an enterprise-grade B2B Product Marketing Writer.
+Your task is to generate a high-clarity, practitioner-level marketing asset
+based ONLY on the INSIGHTS and STRUCTURE provided below.
+
+Do not add external knowledge.
+Do not invent numbers, KPIs, improvements, benchmarks, or capabilities that do not explicitly appear in the INSIGHTS.
+If you are not sure about the information, use the context and references to make a decision.
+
+You are writing as the Product Marketing Manager of AlgoSec.
+
+AlgoSec is NOT a firewall vendor. AlgoSec does NOT deploy NGFWs.
+AlgoSec does NOT provide inline protection, enforcement, or hardware.
+MUST NOT describe AlgoSec as making enforcement decisions, blocking traffic, or providing L3-L7 protection.
+
+AlgoSec provides:
+- Automated application connectivity management
+- End-to-end visibility across hybrid networks (on-prem + cloud)
+- Automated policy cleanup across firewalls + cloud SGs + tags
+- Change workflow automation with impact analysis
+- Risk and compliance checks before implementation
+- Tag-based and object-based policy logic
+- DevSecOps integration (impact checks inside CI/CD)
+
+Core value proposition:
+AlgoSec helps Network & Security Operations teams reduce outages,
+eliminate policy sprawl, clean up shadow rules, accelerate approvals,
+and gain full visibility across hybrid environments.
+
+Write every asset as if AlgoSec is the intelligence layer that analyzes,
+simulates, and orchestrates policies — not a firewall vendor.
+
+Do NOT position AlgoSec as:
+- selling firewalls
+- deploying NGFWs
+- providing network hardware
+- replacing cloud-native controls
+
+Always connect messaging to:
+CAB fatigue, shadow rules, rule bloat, hybrid inconsistencies,
+change backlog pressure, outage anxiety, misconfiguration risk
+
+
+
+"""
+
+
 DEFAULT_TEMPLATE = """
-
-
 ------------------------------------------------------
 CONTENT GUARDRAILS (MANDATORY)
 ------------------------------------------------------
@@ -207,38 +252,44 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             "doc_id": str(metadata.get("file_id") or metadata.get("doc_id") or ""),
             "file_id": _safe_int(metadata.get("file_id")),
             
-            # Reddit-specific fields
+            # Common fields across all document types (new structure)
+            "citation": _safe_str(metadata.get("citation")),
+            "citation_start_time": _safe_float(metadata.get("citation_start_time")),
+            "icp_role_type": _safe_str(metadata.get("icp_role_type")),
+            "title": _fix_mojibake(_safe_str(metadata.get("title"))),
+            "channel": _fix_mojibake(_safe_str(metadata.get("channel"))),
+            "type": _safe_str(metadata.get("type") or doc_type),
+            
+            # Podcast-specific fields
+            "episode_url": _safe_str(metadata.get("episode_url")),
+            "episode_number": _safe_int(metadata.get("episode_number")),
+            "mp3_url": _safe_str(metadata.get("mp3_url")),
+            
+            # Reddit-specific fields (new structure)
+            "selftext": _safe_str(metadata.get("selftext")),
+            "thread_author": _safe_str(metadata.get("thread_author")),
             "subreddit": _safe_str(metadata.get("subreddit")),
+            "thread_url": _safe_str(metadata.get("thread_url")),
+            "detailed_explanation": _safe_str(metadata.get("detailed-explanation")),
+            
+            # YouTube-specific fields
+            "video_url": _safe_str(metadata.get("video_url")),
+            "description": _safe_str(metadata.get("description")),
+            
+            # Legacy fields (for backward compatibility with old data)
             "author": _safe_str(metadata.get("author") or metadata.get("author_fullname")),
             "author_fullname": _safe_str(metadata.get("author_fullname")),
-            "thread_url": _safe_str(metadata.get("thread_url")),
             "comment_url": _safe_str(metadata.get("comment_url")),
             "parent_comment_url": _safe_str(metadata.get("parent_comment_url")),
             "thread_index": _safe_int(metadata.get("thread_index")),
             "reply_index": _safe_int(metadata.get("reply_index")),
             "flair_text": _safe_str(metadata.get("flair_text")),
             "ups": _safe_int(metadata.get("ups")),
-            # Convert timestamp/created_utc to string if they're numbers
             "timestamp": _convert_timestamp(metadata.get("timestamp") or metadata.get("created_utc")),
             "created_utc": _convert_timestamp(metadata.get("created_utc")),
-            "type": _safe_str(metadata.get("type") or doc_type),
-            
-            # YouTube-specific fields
-            "channel": _fix_mojibake(_safe_str(metadata.get("channel"))),
-            "title": _fix_mojibake(_safe_str(metadata.get("title"))),
-            "video_url": _safe_str(metadata.get("video_url")),
             "start_sec": _safe_float(metadata.get("start_sec")),
             "end_sec": _safe_float(metadata.get("end_sec")),
             "level": _safe_int(metadata.get("level")),
-            "description": _safe_str(metadata.get("description")),
-            
-            # Podcast-specific and citation fields
-            "episode_url": _safe_str(metadata.get("episode_url")),
-            "episode_number": _safe_int(metadata.get("episode_number")),
-            "mp3_url": _safe_str(metadata.get("mp3_url")),
-            "citation": _safe_str(metadata.get("citation")),
-            "citation_start_time": _safe_float(metadata.get("citation_start_time")),
-            "icp_role_type": _safe_str(metadata.get("icp_role_type")),
         }
         
         sources.append(source)
@@ -267,7 +318,7 @@ async def process_rag(
     logger.info(f"Context text preview: {marketing_text[:100]}...")
     logger.info(f"Tone: {tone}, Asset Type: {asset_type}, ICP: {icp}")
     logger.info(f"Full context text: {marketing_text}")
-    logger.info(f"Template: {template}")
+    logger.debug(f"Template: {template}")
     
     # Use default template if none provided
     if template is None:
@@ -321,16 +372,24 @@ async def process_rag(
     logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
     retrieval_query = marketing_text
     try:
+        # NOTE:
+        # Some newer OpenAI models (e.g., reasoning / latest GPT models)
+        # only support the default temperature value of 1.0 and will
+        # return a 400 error if another value (like the LangChain default
+        # of 0.7) is sent. We explicitly set temperature=1.0 here to
+        # avoid sending an unsupported value.
         retrieval_llm = ChatOpenAI(
-            model_name="gpt-4",
-            temperature=0.0,
+            model_name="gpt-4o", #"gpt-5",
             openai_api_key=settings.OPENAI_API_KEY,
+            temperature=1.0,
         )
         rq_messages = [HumanMessage(content=retrieval_prompt)]
         rq_response = await retrieval_llm.ainvoke(rq_messages)
         retrieval_query = (rq_response.content or marketing_text).strip()
         logger.info(f"✓ Retrieval query built (length={len(retrieval_query)} chars)")
-        logger.debug(f"Retrieval query:\n{retrieval_query}")
+        logger.info("################################################################################# Retrieval query")
+        logger.info(f"Retrieval query:\n{retrieval_query}")
+        logger.info("#################################################################################")
     except Exception as e:
         logger.warning(
             f"⚠ Error building retrieval query, falling back to full context: "
@@ -431,25 +490,20 @@ async def process_rag(
     logger.debug(f"Full prompt:\n{prompt}")
     
     # Initialize LLM
-    logger.info("Initializing LLM (GPT-4, temp=0.7)...")
+    logger.info("Initializing LLM (GPT-4o)...")
+    # See note above on temperature: we set temperature=1.0 explicitly
+    # to comply with models that only accept the default temperature.
     llm = ChatOpenAI(
-        model_name="gpt-4",
-        temperature=0.7,
-        openai_api_key=settings.OPENAI_API_KEY
+        model_name="gpt-4o", #"gpt-5",
+        openai_api_key=settings.OPENAI_API_KEY,
+        temperature=1.0,
     )
     logger.info("✓ LLM initialized")
     
     # Generate response
     logger.info("Sending request to OpenAI API...")
     messages = [
-        SystemMessage(content="""
-        You are an enterprise-grade B2B Product Marketing Writer.
-        Your task is to generate a high-clarity, practitioner-level marketing asset
-        based ONLY on the INSIGHTS and STRUCTURE provided below.
-        
-        Do not add external knowledge.
-        Do not invent numbers, KPIs, improvements, benchmarks, or capabilities that do not explicitly appear in the INSIGHTS.
-        If you are not sure about the information, use the context and references to make a decision."""),
+        SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=prompt)
     ]
     
@@ -464,12 +518,23 @@ async def process_rag(
         logger.error(f"✗ Error calling LLM: {type(e).__name__}: {str(e)}")
         raise
     
-    # Format sources – expose only external references (YouTube/Reddit/Podcasts).
-    # User-uploaded documents are intentionally NOT surfaced here; they are only
-    # used to build the RAG context passed to the LLM in the prompt.
+    # Format sources for the UI.
+    # We always include user-uploaded documents that were part of the RAG context,
+    # and we also append any external references (YouTube/Reddit/Podcasts) if available.
     logger.info("Formatting sources...")
-    sources = format_sources(external_docs)
-    logger.info(f"✓ Formatted {len(sources)} external sources (user-uploaded documents are used only in prompt context)")
+    source_docs: list[Any] = []
+    if user_docs:
+        logger.info(f"Including {len(user_docs)} user documents as sources")
+        source_docs.extend(user_docs)
+    if external_docs:
+        logger.info(f"Including {len(external_docs)} external reference documents as sources")
+        source_docs.extend(external_docs)
+
+    sources = format_sources(source_docs)
+    logger.info(
+        f"✓ Formatted {len(sources)} sources "
+        f"({len(user_docs)} user documents, {len(external_docs)} external references)"
+    )
     
     logger.info("=== RAG Pipeline Completed Successfully ===")
     return refined_text, sources

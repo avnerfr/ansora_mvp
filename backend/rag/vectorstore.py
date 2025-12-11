@@ -3,8 +3,8 @@ from qdrant_client import QdrantClient
 from typing import List
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+from langchain_openai import OpenAIEmbeddings
 from core.config import settings
-from sentence_transformers import SentenceTransformer
 import uuid
 import logging
 import types
@@ -12,33 +12,13 @@ import types
 logger = logging.getLogger(__name__)
 
 
-class SentenceTransformerEmbeddings(Embeddings):
-    """Wrapper to use SentenceTransformer with LangChain."""
-    def __init__(self, model_name: str):
-        self.model = SentenceTransformer(model_name)
-        self.model_name = model_name
-    
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of documents."""
-        embeddings = self.model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-        return embeddings.tolist()
-    
-    def embed_query(self, text: str) -> List[float]:
-        """Embed a single query."""
-        embedding = self.model.encode(text, convert_to_numpy=True, normalize_embeddings=True)
-        return embedding.tolist()
-
-
 class VectorStore:
     def __init__(self):
-        # Use SentenceTransformer for all embeddings (user docs + cloud data)
-        # Same model for consistency and to avoid OpenAI API costs
-        # Lazy-loaded to reduce memory usage at startup
-        # SHARED model instance to avoid loading twice
-        self._shared_model = None
-        self._model_name = "sentence-transformers/all-MiniLM-L6-v2"
+        # Use OpenAI text-embedding-3-small for all embeddings (user docs + cloud data)
+        # Vector size: 1536 dimensions
+        self._model_name = "text-embedding-3-small"
+        self._vector_size = 1536
         self._embeddings = None
-        self._cloud_embeddings = None
         
         # Single Qdrant client (cloud) for both user documents and summaries
         self.client = QdrantClient(
@@ -89,43 +69,27 @@ class VectorStore:
             # Monkey‑patch client.search so that LangChain can call it
             self.client.search = types.MethodType(_search, self.client)
     
-    def _get_shared_model(self):
-        """Get or create the shared SentenceTransformer model instance."""
-        if self._shared_model is None:
-            try:
-                logger.info("Initializing shared SentenceTransformer model (lazy load)...")
-                self._shared_model = SentenceTransformer(self._model_name)
-                logger.info(f"✓ SentenceTransformer initialized: {self._shared_model.get_sentence_embedding_dimension()}D")
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize SentenceTransformer: {type(e).__name__}: {str(e)}")
-                raise
-        return self._shared_model
-    
     @property
     def embeddings(self):
-        """Lazy-load SentenceTransformer wrapper for user documents (LangChain compatible)."""
+        """Lazy-load OpenAI embeddings for both user documents and cloud collections (LangChain compatible)."""
         if self._embeddings is None:
             try:
-                logger.info("Creating LangChain wrapper for user documents...")
-                model = self._get_shared_model()  # Use shared model instance
-                self._embeddings = SentenceTransformerEmbeddings(self._model_name)
-                self._embeddings.model = model  # Share the same model instance
-                logger.info(f"✓ LangChain embeddings wrapper created: 384D")
+                logger.info(f"Creating OpenAI embeddings with model {self._model_name} ({self._vector_size}D)...")
+                self._embeddings = OpenAIEmbeddings(
+                    model=self._model_name,
+                    openai_api_key=settings.OPENAI_API_KEY
+                )
+                logger.info(f"✓ OpenAI embeddings initialized: {self._vector_size}D")
             except Exception as e:
-                logger.error(f"❌ Failed to create embeddings wrapper: {type(e).__name__}: {str(e)}")
+                logger.error(f"❌ Failed to create embeddings: {type(e).__name__}: {str(e)}")
                 self._embeddings = None
         return self._embeddings
-    
-    @property
-    def cloud_embeddings(self):
-        """Alias for embeddings when querying shared cloud collections."""
-        return self._get_shared_model()
     
     def get_collection_name(self, user_id: int) -> str:
         """Get the Qdrant collection name for a user."""
         return f"user_{user_id}_documents"
     
-    def create_collection_if_not_exists(self, user_id: int, vector_size: int = 384):
+    def create_collection_if_not_exists(self, user_id: int, vector_size: int = 1536):
         """Create a Qdrant collection for a user if it doesn't exist."""
         collection_name = self.get_collection_name(user_id)
         try:
@@ -226,26 +190,28 @@ class VectorStore:
                 logger.error(f"❌ Error getting collection info: {type(e).__name__}: {str(e)}", exc_info=True)
                 return []
             
-            # Generate query embedding - use the model that matches the collection vector size
+            # Generate query embedding using OpenAI text-embedding-3-small
             try:
-                if actual_vector_size == 384:
-                    # Collection uses SentenceTransformer embeddings (384D)
-                    logger.info("Generating query embedding with SentenceTransformer (384D)...")
-                    embeddings = self.cloud_embeddings  # This will lazy-load if needed
+                if actual_vector_size == 1536:
+                    # Collection uses text-embedding-3-small (3072D)
+                    logger.info("Generating query embedding with text-embedding-3-small (1536D)...")
+                    embeddings = self.embeddings  # OpenAI embeddings
                     if embeddings is None:
-                        logger.error("❌ SentenceTransformer not initialized!")
+                        logger.error("❌ OpenAI embeddings not initialized!")
                         return []
-                    query_vector = embeddings.encode(query, convert_to_numpy=True).tolist()
-                elif actual_vector_size == 1536:
-                    # Legacy: Collection uses 1536D vectors (shouldn't happen with new setup)
-                    logger.warning("⚠ Collection uses 1536D vectors - using SentenceTransformer 384D instead (may cause issues)")
-                    embeddings = self.cloud_embeddings
-                    if embeddings is None:
-                        logger.error("❌ SentenceTransformer not initialized!")
-                        return []
-                    query_vector = embeddings.encode(query, convert_to_numpy=True).tolist()
+                    query_vector = embeddings.embed_query(query)
+                elif actual_vector_size == 384:
+                    # Legacy: Collection uses 384D vectors (old SentenceTransformer setup)
+                    logger.warning("⚠ Collection uses 384D vectors - expected 3072D. Please re-index your collection.")
+                    logger.error("❌ Vector size mismatch! Expected 1536D, got 384D")
+                    return []
+                elif actual_vector_size == 3072:
+                    # Legacy: Collection uses 1536D vectors (old OpenAI setup)
+                    logger.warning("⚠ Collection uses 1536D vectors.")
+                    logger.error("❌ Vector size mismatch! Expected 1536D, got D3072")
+                    return []
                 else:
-                    logger.error(f"❌ Unsupported vector size: {actual_vector_size}D. Expected 384 or 1536.")
+                    logger.error(f"❌ Unsupported vector size: {actual_vector_size}D. Expected 3072.")
                     return []
                 
                 logger.info(f"✓ Query vector generated: {len(query_vector)}D")
@@ -294,33 +260,29 @@ class VectorStore:
                     "doc_type": doc_type,
                     "score": point.score,  # Similarity score from Qdrant
 
-                    'citation': point.payload.get("citation"),                     
-                    'citation_start_time': point.payload.get("citation_start_time"),                     
-                    'icp_role_type': point.payload.get("icp_role_type"),                    
-                    'title': point.payload.get("title"), 
-                    'description': point.payload.get("description"),
-                    'channel': point.payload.get("channel"), 
+                    # Common fields across all document types
+                    'citation': point.payload.get("citation"),
+                    'citation_start_time': point.payload.get("citation_start_time"),
+                    'icp_role_type': point.payload.get("icp_role_type"),
+                    'title': point.payload.get("title"),
+                    'channel': point.payload.get("channel"),
                     'type': point.payload.get("type"),
 
                     # Podcast-specific fields
                     'episode_url': point.payload.get("episode_url"),
-                    'episode_number': point.payload.get("episode_number"), 
+                    'episode_number': point.payload.get("episode_number"),
                     'mp3_url': point.payload.get("mp3_url"),
-
 
                     # YouTube-specific fields
                     'video_url': point.payload.get("video_url"),
-
+                    'description': point.payload.get("description"),
 
                     # Reddit-specific fields
+                    'selftext': point.payload.get("selftext"),
+                    'thread_author': point.payload.get("thread_author"),
                     'subreddit': point.payload.get("subreddit"),
-                    'author_fullname': point.payload.get("author_fullname"),
-                    'level': point.payload.get("level"),
-                    'created_utc': point.payload.get("created_utc"),
                     'thread_url': point.payload.get("thread_url"),
-                    'comment_url': point.payload.get("comment_url"),
-                    'ups': point.payload.get("ups"),
-                    'flair_text': point.payload.get("flair_text"),
+                    'detailed-explanation': point.payload.get("detailed-explanation"),
 
                 }
                 
