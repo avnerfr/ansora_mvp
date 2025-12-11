@@ -118,7 +118,7 @@ DEFAULT_TEMPLATE = """
 ------------------------------------------------------
 CONTENT GUARDRAILS (MANDATORY)
 ------------------------------------------------------
-- All claims must come directly from {{context}} (user-provided pain points and context).
+- All claims must come directly from the user text which contains the product description and the request or instruction.
 - No invented metrics, quotes, statistics, before/after claims, or capabilities.
 - No buzzwords. No vague promises.
 - Plain text output only.
@@ -190,6 +190,26 @@ this is the user text: {{user_provided_text}}
 
 """
 
+VECTOR_DB_RETREIVAL_PROMPT_1 = """
+You are a retrieval query condenser for a RAG system.
+Your goal is to transform a long, messy input into a small number of dense, information-rich sentences that are optimized for vector search.
+
+You are given two inputs:
+User text: the user’s question, request, or instruction.
+Backgrounds: extra context such as previous messages, system instructions, or document snippets.
+
+create a search query optimized for a vector database that retrieves the most relevant technical insights. 
+Return a short, precise query focusing on:
+- pains or problems
+- solutions or methods
+- technologies or processes
+- ICP role context (if implied)
+Avoid buzzwords or high-level terms. Focus on concrete operational or security challenges relevant to hybrid networks, firewall policy management, automation, risk, compliance, cloud migration, or application connectivity.
+
+
+this is the backgrounds of the query: {{backgrounds}}
+this is the user text: {{user_provided_text}}
+"""
 
 
 def _convert_timestamp(value):
@@ -274,6 +294,7 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             discussion_desc
             or metadata.get("detailed-explanation")
             or metadata.get("detailed_explanation")
+            or metadata.get("detailed_description")
         )
         display_text = (
             _safe_str(detailed_expl) if is_reddit and _safe_str(detailed_expl) else content

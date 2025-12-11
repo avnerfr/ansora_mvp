@@ -282,9 +282,9 @@ class VectorStore:
                     'thread_author': point.payload.get("thread_author"),
                     'subreddit': point.payload.get("subreddit"),
                     'thread_url': point.payload.get("thread_url"),
-                    # Support both legacy "detailed-explanation" and new "discussion_description"
+                    # Support both legacy "detailed-explanation" and new "detailed_description"
                     'detailed-explanation': point.payload.get("detailed-explanation") or point.payload.get("discussion_description"),
-                    'discussion_description': point.payload.get("discussion_description"),
+                    'detailed_description': point.payload.get("detailed_description"),
 
                 }
                 

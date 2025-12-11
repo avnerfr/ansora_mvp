@@ -83,6 +83,25 @@ export default function ResultsPage() {
   const isPodcast = (source: any) =>
     source.doc_type === 'podcast_summary' || source.type === 'podcast_summary'
 
+  // Very small markdown-style formatter: supports **bold** and newlines.
+  const formatRefinedText = (text: string): string => {
+    if (!text) return ''
+
+    // Escape HTML first
+    let escaped = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+
+    // Basic bold: **TEXT** → <strong>TEXT</strong>
+    escaped = escaped.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+
+    // Preserve newlines
+    escaped = escaped.replace(/\n/g, '<br/>')
+
+    return escaped
+  }
+
   // Deduplicate sources by stable keys (thread URL, video URL, podcast episode URL,
   // or doc_id/filename), keeping the entry with the highest score.
   const dedupeSources = (sources: any[]): any[] => {
@@ -156,9 +175,10 @@ export default function ResultsPage() {
               </h2>
             </div>
             <div className="prose max-w-none">
-              <div className="whitespace-pre-wrap text-gray-700 bg-green-50 p-6 rounded-lg border border-green-200 leading-relaxed">
-                {results.refined_text}
-              </div>
+              <div
+                className="text-gray-700 bg-green-50 p-6 rounded-lg border border-green-200 leading-relaxed"
+                dangerouslySetInnerHTML={{ __html: formatRefinedText(results.refined_text) }}
+              />
             </div>
             
             {/* Copy to Clipboard Button */}
