@@ -19,18 +19,6 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class Document(Base):
-    __tablename__ = "documents"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False, index=True)
-    filename = Column(String, nullable=False)
-    file_type = Column(String, nullable=False)
-    file_path = Column(String, nullable=False)
-    file_size = Column(Integer, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class PromptTemplate(Base):
     __tablename__ = "prompt_templates"
     
@@ -78,24 +66,6 @@ class UserResponse(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-
-
-class DocumentUploadResponse(BaseModel):
-    document_id: int
-    filename: str
-    file_type: str
-    status: str
-
-
-class DocumentListResponse(BaseModel):
-    id: int
-    filename: str
-    file_type: str
-    file_size: int
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
 
 
 class PromptTemplateRequest(BaseModel):

@@ -72,26 +72,6 @@ export const authAPI = {
   },
 }
 
-// Documents API
-export const documentsAPI = {
-  upload: async (files: File[]) => {
-    const formData = new FormData()
-    files.forEach((file) => {
-      formData.append('files', file)
-    })
-    const response = await apiClient.post('/documents/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-    return response.data
-  },
-  list: async () => {
-    const response = await apiClient.get('/documents/list')
-    return response.data
-  },
-}
-
 // RAG API
 export const ragAPI = {
   process: async (
@@ -111,6 +91,18 @@ export const ragAPI = {
       asset_type: options?.assetType,
       icp: options?.icp,
       template_override: options?.templateOverride,
+    })
+    return response.data
+  },
+  uploadContext: async (files: File[]) => {
+    const formData = new FormData()
+    files.forEach((file) => {
+      formData.append('files', file)
+    })
+    const response = await apiClient.post('/rag/upload-context', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
     })
     return response.data
   },

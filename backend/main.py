@@ -11,7 +11,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - fail fast when dependen
     ) from exc
 from core.config import settings
 from db import init_db
-from api import auth, documents, rag
+from api import auth, rag
 
 # Initialize database
 init_db()
@@ -47,7 +47,6 @@ logger.info(f"✅ CORS middleware configured with {len(origins)} origins")
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
-app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
 app.include_router(rag.router, prefix="/api/v1/rag", tags=["rag"])
 
 

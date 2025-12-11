@@ -111,7 +111,8 @@ change backlog pressure, outage anxiety, misconfiguration risk
 
 
 """
-
+# context = user provided text
+# uploaded documents = user uploaded documents
 
 DEFAULT_TEMPLATE = """
 ------------------------------------------------------
@@ -147,20 +148,45 @@ No extra commentary.
 From references provide all available information.
 """.strip()
 
-VECTOR_DB_RETREIVAL_PROMPT = """
-You are a helpful assistant that retrieves information from a vector database.
-You are given a query and a list of documents.
-You need to retrieve the most relevant documents from the list of documents.
-You need to return the most relevant documents from the list of documents.
-this is the user query: {{user_provided_text}}
-this is the list of documents: {{documents}}
-this is the context of the documents: {{backgrounds}}
+#VECTOR_DB_RETREIVAL_PROMPT = """
+#You are a helpful assistant that prepares a retrieval query for a vector database.
+#You are given a user query and high-level background/use-case hints.
 
-Output: one short retrieval query (1-3 sentences) that keeps only:
- - entities
- - time range
- - domain keywords
- - constraints (jurisdiction, product, tech stack, etc.)
+#this is the user query: {{user_provided_text}}
+#this is the context of the query: {{backgrounds}}
+
+#Output: one short retrieval query (1-3 sentences) that keeps only:
+# - entities
+# - time range
+# - domain keywords
+# - constraints (jurisdiction, product, tech stack, etc.)
+#"""
+
+
+VECTOR_DB_RETREIVAL_PROMPT = """
+You are a retrieval query condenser for a RAG system.
+Your goal is to transform a long, messy input into a small number of dense, information-rich sentences that are optimized for vector search.
+
+You are given two inputs:
+User text: the user’s question, request, or instruction.
+Backgrounds: extra context such as previous messages, system instructions, or document snippets.
+
+Your task:
+Read the user text and backgrounds carefully.
+Identify the core information needs: entities, topics, constraints (time, location, technology, domain, doc_type), and any disambiguating details.
+Ignore anything that is just meta-instruction (style, tone, formatting, “be concise”, etc.) or chit-chat that does not help retrieve relevant documents.
+Produce 1–3 standalone sentences that:
+Are self-contained and make sense without the original prompt.
+Include important proper nouns, key phrases, and domain terms.
+Reflect all major sub-topics the user actually needs documents for, if possible.
+Avoid references like “as above”, “this document”, “the user”, or “you”.
+
+Output format:
+Output only the 1–3 sentences, separated by spaces or line breaks.
+Do not add bullet points, numbering, explanations, or any additional text.
+Do not wrap the output in quotes or code fences.
+this is the backgrounds of the query: {{backgrounds}}
+this is the user text: {{user_provided_text}}
 
 """
 
@@ -232,6 +258,27 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
         source_type = metadata.get("source", metadata.get("source_type", "document"))
         doc_type = metadata.get("doc_type", "unknown")
         
+        # For Reddit posts/threads/comments, prefer the richer discussion
+        # description field (if available) for display instead of the raw
+        # post text/selftext.
+        is_reddit = False
+        try:
+            st_lower = str(source_type).lower() if source_type else ""
+            dt_lower = str(doc_type).lower() if doc_type else ""
+            is_reddit = (st_lower == "reddit") or dt_lower.startswith("reddit_")
+        except Exception:
+            is_reddit = False
+
+        discussion_desc = metadata.get("discussion_description")
+        detailed_expl = (
+            discussion_desc
+            or metadata.get("detailed-explanation")
+            or metadata.get("detailed_explanation")
+        )
+        display_text = (
+            _safe_str(detailed_expl) if is_reddit and _safe_str(detailed_expl) else content
+        )
+        
         # Build source object with all available fields
         # Prepare filename
         filename = metadata.get("filename")
@@ -239,8 +286,9 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
         filename_str = _fix_mojibake(filename_str)
         
         source = {
-            "snippet": (content[:500] if len(content) > 500 else content) or "",
-            "text": content or "",
+            # Use detailed_explanation for Reddit, otherwise fall back to content
+            "snippet": (display_text[:500] if len(display_text) > 500 else display_text) or "",
+            "text": display_text or "",
             "score": score if score is not None else 0.0,
             "source": str(source_type) if source_type else None,
             "source_type": str(source_type) if source_type else None,
@@ -270,7 +318,9 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             "thread_author": _safe_str(metadata.get("thread_author")),
             "subreddit": _safe_str(metadata.get("subreddit")),
             "thread_url": _safe_str(metadata.get("thread_url")),
-            "detailed_explanation": _safe_str(metadata.get("detailed-explanation")),
+            # Prefer discussion_description; fall back to legacy detailed-explanation
+            "detailed_explanation": _safe_str(detailed_expl),
+            "discussion_description": _safe_str(discussion_desc or detailed_expl),
             
             # YouTube-specific fields
             "video_url": _safe_str(metadata.get("video_url")),
@@ -328,43 +378,15 @@ async def process_rag(
         logger.info("Using custom/override template")
 
     # --------------------------------------------------
-    # Step 1: Build optimized retrieval query for vector DB using LLM,
-    #         with {{documents}} populated from user's uploaded documents.
+    # Step 1: Build optimized retrieval query for vector DB using LLM.
+    #         We no longer rely on persisted user documents; the retrieval
+    #         query is built purely from the user's context and backgrounds.
     # --------------------------------------------------
     logger.info("Building optimized retrieval query for vector DB...")
     backgrounds_str = ", ".join(backgrounds)
 
-    documents_summary = ""
-    try:
-        # Pre-fetch a large set of user documents (independent of the current query)
-        # just to build the {{documents}} field for the retrieval prompt.
-        # We intentionally do NOT condition this on marketing_text so that
-        # all uploaded content is available to the retrieval LLM.
-        pre_retriever = vector_store.get_retriever(user_id, k=1000)
-        pre_docs = pre_retriever.get_relevant_documents("")  # neutral query → pull as many chunks as possible
-
-        doc_parts: list[str] = []
-        for i, doc in enumerate(pre_docs, 1):
-            meta = doc.metadata if hasattr(doc, "metadata") else {}
-            filename = meta.get("filename", f"Document {i}")
-            text = doc.page_content if hasattr(doc, "page_content") else str(doc)
-            # Keep up to 1000 chars per document to avoid overlong prompts
-            doc_parts.append(f"[{filename}]: {text[:1000]}")
-
-        documents_summary = "\n\n".join(doc_parts)
-        logger.info(
-            f"✓ Collected {len(pre_docs)} documents for retrieval prompt "
-            f"(summary length={len(documents_summary)} chars)"
-        )
-    except Exception as e:
-        logger.warning(
-            f"⚠ Error collecting documents for retrieval prompt; "
-            f"{{documents}} will be empty: {type(e).__name__}: {str(e)}"
-        )
-
     retrieval_prompt = VECTOR_DB_RETREIVAL_PROMPT
     retrieval_prompt = retrieval_prompt.replace("{{user_provided_text}}", marketing_text)
-    retrieval_prompt = retrieval_prompt.replace("{{documents}}", documents_summary)
     retrieval_prompt = retrieval_prompt.replace("{{backgrounds}}", backgrounds_str)
 
     logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT")
@@ -400,30 +422,9 @@ async def process_rag(
     # Step 2: Retrieve documents from vector DB using the optimized query
     # --------------------------------------------------
     logger.info("Retrieving relevant documents from vector store...")
-    user_docs: list[Any] = []
     external_docs: list[Any] = []
-    
-    # Search user's uploaded documents (local Qdrant) – used for retrieval & prompt context
-    try:
-        retriever = vector_store.get_retriever(user_id, k=3)
-        logger.info(f"Retriever created for user_{user_id}_documents collection")
-        
-        user_docs = retriever.get_relevant_documents(retrieval_query)
-        logger.info(f"✓ Retrieved {len(user_docs)} user documents")
-        
-        # Log document details
-        for i, doc in enumerate(user_docs, 1):
-            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
-            logger.info(f"  User Doc {i}: {metadata.get('filename', 'Unknown')} "
-                       f"(file_id: {metadata.get('file_id', 'N/A')}, "
-                       f"content length: {len(doc.page_content)} chars)")
-            
-    except Exception as e:
-        logger.warning(f"⚠ Error retrieving user documents: {type(e).__name__}: {str(e)}")
-    
-    # Optional external vector search (e.g., YouTube/Reddit/Podcasts) – used ONLY for references,
-    # not for the prompt context. This preserves web insights in the Sources panel without
-    # polluting the guarded RAG context that must be based on user-provided documents.
+
+    # External vector search (e.g., YouTube/Reddit/Podcasts)
     try:
         logger.info("Searching external sources (YouTube/Reddit/Podcasts) from cloud Qdrant for references...")
         external_docs = vector_store.search_reddit_posts(retrieval_query, k=10)
@@ -432,19 +433,29 @@ async def process_rag(
         logger.warning(f"⚠ Error retrieving external reference documents: {type(e).__name__}: {str(e)}")
         external_docs = []
 
-    # For RAG context, use only user-uploaded documents (no external sources)
-    retrieved_docs = user_docs
-    logger.info(f"✓ Total context sources: {len(retrieved_docs)} user documents (excluding external references)")
+    # For RAG context, we now use the external documents (no persisted user documents).
+    retrieved_docs = external_docs
+    logger.info(f"✓ Total context sources: {len(retrieved_docs)} external documents")
     
     # Format context from retrieved documents
     logger.info("Formatting context from retrieved documents...")
-    context_parts = []
+    context_parts: list[str] = []
+    seen_snippets: set[str] = set()
     for i, doc in enumerate(retrieved_docs, 1):
         metadata = doc.metadata if hasattr(doc, 'metadata') else {}
         filename = metadata.get("filename", "Unknown")
         content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-        context_parts.append(f"[From {filename}]: {content[:1000]}")
-        logger.debug(f"  Context part {i} from {filename}: {len(content)} chars")
+        snippet = content[:1000]
+
+        # Avoid adding identical snippets multiple times (can happen with
+        # overlapping chunks or duplicate content in the vector store).
+        if snippet in seen_snippets:
+            logger.debug(f"  Skipping duplicate context snippet from {filename}")
+            continue
+
+        seen_snippets.add(snippet)
+        context_parts.append(f"[From {filename}]: {snippet}")
+        logger.debug(f"  Context part {i} from {filename}: {len(content)} chars (snippet len={len(snippet)})")
     
     vector_search_context = (
         "\n\n".join(context_parts) if context_parts else "No relevant documents found."
@@ -519,21 +530,21 @@ async def process_rag(
         raise
     
     # Format sources for the UI.
-    # We always include user-uploaded documents that were part of the RAG context,
-    # and we also append any external references (YouTube/Reddit/Podcasts) if available.
+    # We ONLY include external references (YouTube/Reddit/Podcasts) as sources
+    # for the UI. User‑uploaded documents are used as hidden context for RAG,
+    # but are not returned as visible "sources" in the result list.
     logger.info("Formatting sources...")
     source_docs: list[Any] = []
-    if user_docs:
-        logger.info(f"Including {len(user_docs)} user documents as sources")
-        source_docs.extend(user_docs)
     if external_docs:
-        logger.info(f"Including {len(external_docs)} external reference documents as sources")
+        logger.info(f"Including {len(external_docs)} external reference documents as sources (excluding user uploads)")
         source_docs.extend(external_docs)
+    else:
+        logger.info("No external reference documents found; returning empty sources list (user uploads excluded)")
 
     sources = format_sources(source_docs)
     logger.info(
         f"✓ Formatted {len(sources)} sources "
-        f"({len(user_docs)} user documents, {len(external_docs)} external references)"
+        f"(0 user documents, {len(external_docs)} external references)"
     )
     
     logger.info("=== RAG Pipeline Completed Successfully ===")

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from db import get_db, init_db
-from models import User, UserCreate, UserLogin, UserResponse, TokenResponse, Document
+from models import User, UserCreate, UserLogin, UserResponse, TokenResponse
 from core.auth import verify_password, get_password_hash, create_access_token, get_current_user
 from rag.vectorstore import vector_store
 from core.config import settings
@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 def clear_user_data(user_id: int, db: Session):
-    """Clear all user data: Qdrant collection, uploaded files, and database records."""
+    """
+    Clear all user data: Qdrant collection and any stored files.
+    Note: We no longer persist uploaded documents in the database.
+    """
     logger.info(f"Clearing all data for user {user_id}")
     
     # 1. Clear Qdrant collection
@@ -35,16 +38,6 @@ def clear_user_data(user_id: int, db: Session):
     except Exception as e:
         logger.error(f"✗ Failed to delete storage directory: {str(e)}")
     
-    # 3. Delete document records from database
-    try:
-        deleted_count = db.query(Document).filter(Document.user_id == user_id).delete()
-        db.commit()
-        logger.info(f"✓ Deleted {deleted_count} document records from database for user {user_id}")
-    except Exception as e:
-        logger.error(f"✗ Failed to delete document records: {str(e)}")
-        db.rollback()
-
-
 @router.post("/register", response_model=TokenResponse)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Register a new user."""

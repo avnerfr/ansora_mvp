@@ -1,8 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
+from typing import List
 import uuid
 from datetime import datetime
 import logging
+import os
+import tempfile
+from pathlib import Path
 
 from db import get_db
 from models import (
@@ -12,6 +16,8 @@ from models import (
 )
 from core.auth import get_current_user
 from rag.pipeline import process_rag, DEFAULT_TEMPLATE
+from rag.loader import load_document
+from core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -54,6 +60,96 @@ async def get_prompt_template(
         return PromptTemplateResponse(template=template_record.template)
     else:
         return PromptTemplateResponse(template=DEFAULT_TEMPLATE)
+
+
+def _guess_file_type(filename: str) -> str:
+    """Lightweight MIME type detection based on file extension."""
+    ext = filename.lower().split('.')[-1]
+    type_map = {
+        'pdf': 'application/pdf',
+        'txt': 'text/plain',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'doc': 'application/msword',
+    }
+    return type_map.get(ext, 'application/octet-stream')
+
+
+@router.post("/upload-context")
+async def upload_context_documents(
+    files: List[UploadFile] = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Upload temporary context documents.
+
+    - Does NOT persist anything in the database.
+    - Does NOT index anything in Qdrant.
+    - Returns extracted text so the frontend can append it to the context box.
+    """
+    if not files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files provided",
+        )
+
+    results = []
+
+    for file in files:
+        extracted_text = None
+        try:
+            file_type = _guess_file_type(file.filename)
+
+            # Write to a temporary file so our existing loaders (PDF, DOCX, TXT)
+            # can operate on a filesystem path.
+            suffix = Path(file.filename).suffix or ""
+            fd, temp_path = tempfile.mkstemp(
+                suffix=suffix,
+                prefix=f"user_{current_user.id}_",
+                dir=settings.STORAGE_PATH,
+            )
+            os.close(fd)
+
+            try:
+                with open(temp_path, "wb") as buffer:
+                    content = await file.read()
+                    buffer.write(content)
+
+                documents = load_document(temp_path, file_type)
+
+                # Combine original document text so the frontend can append it
+                # directly into the context box.
+                extracted_text = "\n\n".join(
+                    d.page_content
+                    for d in documents
+                    if getattr(d, "page_content", None)
+                )
+            finally:
+                # Best-effort cleanup of the temporary file.
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    logger.warning(f"Failed to delete temp file: {temp_path}")
+
+            results.append(
+                {
+                    "filename": file.filename,
+                    "file_type": file_type,
+                    "status": "success",
+                    "content_text": extracted_text,
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error processing context file {file.filename}: {e}")
+            results.append(
+                {
+                    "filename": file.filename,
+                    "file_type": _guess_file_type(file.filename),
+                    "status": f"error: {str(e)}",
+                    "content_text": None,
+                }
+            )
+
+    return results
 
 
 @router.post("/process", response_model=RAGProcessResponse)

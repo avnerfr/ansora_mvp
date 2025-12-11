@@ -7,7 +7,7 @@ import { Navbar } from '@/components/Navbar'
 import { FileDropzone } from '@/components/FileDropzone'
 import { TextArea } from '@/components/TextArea'
 import { Button } from '@/components/Button'
-import { documentsAPI, ragAPI } from '@/lib/api'
+import { ragAPI } from '@/lib/api'
 import { isAuthenticated } from '@/lib/auth'
 
 const USE_CASE_OPTIONS = [
@@ -22,14 +22,13 @@ export default function HomePage() {
   const router = useRouter()
   const [selectedUseCases, setSelectedUseCases] = useState<string[]>([])
   const [contextText, setContextText] = useState('')
-  const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
-  const [uploadStatus, setUploadStatus] = useState<Record<string, string>>({})
   const [authChecked, setAuthChecked] = useState(false)
   const [hasToken, setHasToken] = useState(false)
   const [tone, setTone] = useState<string>('')
   const [assetType, setAssetType] = useState<string>('')
   const [icp, setIcp] = useState<string>('')
+  const [isUploadingContextDocs, setIsUploadingContextDocs] = useState(false)
 
   // Check authentication only after component mounts
   useEffect(() => {
@@ -43,34 +42,35 @@ export default function HomePage() {
     }
   }, [router])
 
-  // Fetch user's documents
-  const { data: documents, refetch: refetchDocuments } = useQuery({
-    queryKey: ['documents'],
-    queryFn: documentsAPI.list,
-    enabled: authChecked && hasToken,
-  })
+  const handleContextFilesSelected = async (files: File[]) => {
+    if (!files || files.length === 0) return
 
-  const handleFilesSelected = async (files: File[]) => {
-    setUploadStatus({})
-    setIsProcessing(true)
+    setIsUploadingContextDocs(true)
 
     try {
-      const response = await documentsAPI.upload(files)
-      setUploadedFiles([...uploadedFiles, ...files])
-      
-      // Update upload status
-      const statusMap: Record<string, string> = {}
+      const response = await ragAPI.uploadContext(files)
+
+      // Collect extracted text from the backend for each successfully processed file
+      const extractedTexts: string[] = []
       response.forEach((item: any) => {
-        statusMap[item.filename] = item.status
+        if (item.status === 'success' && item.content_text) {
+          extractedTexts.push(item.content_text)
+        }
       })
-      setUploadStatus(statusMap)
-      
-      refetchDocuments()
+
+      if (extractedTexts.length > 0) {
+        const combined = extractedTexts.join('\n\n')
+        setContextText((prev) =>
+          prev && prev.trim().length > 0
+            ? `${prev.trim()}\n\n${combined}`
+            : combined
+        )
+      }
     } catch (error: any) {
       console.error('Upload error:', error)
       alert('Failed to upload files. Please try again.')
     } finally {
-      setIsProcessing(false)
+      setIsUploadingContextDocs(false)
     }
   }
 
@@ -117,9 +117,6 @@ export default function HomePage() {
       // Open results in new tab
       const resultsUrl = `/results/${response.job_id}`
       window.open(resultsUrl, '_blank')
-      
-      // Reset form
-      setContextText('')
     } catch (error: any) {
       console.error('Processing error:', error)
       alert(
@@ -129,14 +126,6 @@ export default function HomePage() {
     } finally {
       setIsProcessing(false)
     }
-  }
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes'
-    const k = 1024
-    const sizes = ['Bytes', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
   }
 
   if (!authChecked || !hasToken) {
@@ -162,10 +151,9 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* Section 1: Your Request and Upload Documents (Side by Side) */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Your Request - Takes 2 columns */}
-            <section className="bg-white rounded-lg shadow p-6 lg:col-span-2">
+          {/* Section 1: Context */}
+          <div className="grid grid-cols-1 gap-6">
+            <section className="bg-white rounded-lg shadow p-6">
               <h2 className="text-xl font-semibold text-gray-900 mb-4">
                 1. Context
               </h2>
@@ -176,53 +164,29 @@ export default function HomePage() {
                 onChange={(e) => setContextText(e.target.value)}
                 placeholder="Describe the situation, pain points, or raw notes you want to turn into a marketing asset..."
               />
-            </section>
 
-            {/* Upload Documents - Takes 1 column */}
-            <section className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
-                Upload Documents
-              </h2>
-              <p className="text-xs text-gray-500 mb-3">(Optional)</p>
-              <FileDropzone onFilesSelected={handleFilesSelected} />
-              
-              {uploadedFiles.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  <h3 className="text-sm font-medium text-gray-700">
-                    Recently uploaded:
-                  </h3>
-                  {uploadedFiles.map((file, index) => (
-                    <div
-                      key={index}
-                      className="flex items-center justify-between p-2 bg-gray-50 rounded"
-                    >
-                      <span className="text-sm text-gray-700 truncate">{file.name}</span>
-                      <span className="text-xs text-gray-500 ml-2 whitespace-nowrap">
-                        {formatFileSize(file.size)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {documents && documents.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  <h3 className="text-sm font-medium text-gray-700">
-                    Your documents:
-                  </h3>
-                  {documents.map((doc: any) => (
-                    <div
-                      key={doc.id}
-                      className="flex flex-col p-2 bg-gray-50 rounded"
-                    >
-                      <span className="text-sm text-gray-700 truncate">{doc.filename}</span>
-                      <span className="text-xs text-gray-500 mt-1">
-                        {formatFileSize(doc.file_size)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="mt-4 space-y-2">
+                <p className="text-sm font-medium text-gray-700">
+                  Attach context documents (optional)
+                </p>
+                <p className="text-xs text-gray-500">
+                  Upload .txt, .docx, or .pdf files and we&apos;ll append their text
+                  after your context.
+                </p>
+                <FileDropzone
+                  onFilesSelected={handleContextFilesSelected}
+                  acceptedTypes={[
+                    'text/plain',
+                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'application/pdf',
+                  ]}
+                />
+                {isUploadingContextDocs && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Uploading and extracting text from your documents...
+                  </p>
+                )}
+              </div>
             </section>
           </div>
 

@@ -12,6 +12,12 @@ except ImportError:
     PPTX_AVAILABLE = False
 
 try:
+    import docx  # type: ignore[import]
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
+try:
     from PIL import Image
     import pytesseract
     OCR_AVAILABLE = True
@@ -27,6 +33,37 @@ def load_document(file_path: str, file_type: str) -> List[Document]:
         if file_type in ["application/pdf", "pdf"]:
             loader = PyPDFLoader(file_path)
             documents = loader.load()
+        elif file_type in ["text/plain", "txt"]:
+            # Simple text file loading
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read()
+            except Exception as e:
+                text = f"Error reading text file: {str(e)}"
+            documents = [Document(page_content=text, metadata={"source": file_path})]
+        elif file_type in [
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+            "docx",
+            "doc",
+        ]:
+            # Word documents (.docx / .doc)
+            if DOCX_AVAILABLE:
+                try:
+                    doc = docx.Document(file_path)
+                    text_parts = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+                    content = "\n".join(text_parts) if text_parts else "No text content found in document."
+                    documents = [Document(page_content=content, metadata={"source": file_path})]
+                except Exception as e:
+                    documents = [Document(
+                        page_content=f"Error loading Word document: {str(e)}",
+                        metadata={"source": file_path, "error": True}
+                    )]
+            else:
+                documents = [Document(
+                    page_content=f"Word document: {os.path.basename(file_path)}. python-docx not available.",
+                    metadata={"source": file_path}
+                )]
         elif file_type in [
             "application/vnd.ms-powerpoint",
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -90,8 +127,14 @@ def load_document(file_path: str, file_type: str) -> List[Document]:
     return documents
 
 
-def chunk_documents(documents: List[Document], chunk_size: int = 1000, chunk_overlap: int = 200) -> List[Document]:
-    """Split documents into chunks."""
+def chunk_documents(documents: List[Document], chunk_size: int = 1000, chunk_overlap: int = 0) -> List[Document]:
+    """
+    Split documents into chunks.
+    
+    Notes:
+    - We use chunk_overlap=0 to avoid duplicated/overlapping text segments
+      showing up multiple times in the RAG prompt.
+    """
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,

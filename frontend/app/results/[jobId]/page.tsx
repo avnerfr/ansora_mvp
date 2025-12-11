@@ -83,6 +83,48 @@ export default function ResultsPage() {
   const isPodcast = (source: any) =>
     source.doc_type === 'podcast_summary' || source.type === 'podcast_summary'
 
+  // Deduplicate sources by stable keys (thread URL, video URL, podcast episode URL,
+  // or doc_id/filename), keeping the entry with the highest score.
+  const dedupeSources = (sources: any[]): any[] => {
+    const map = new Map<string, any>()
+
+    for (const src of sources || []) {
+      let key: string
+
+      if (src.thread_url) {
+        key = `reddit:${src.thread_url}`
+      } else if (src.video_url) {
+        key = `yt:${src.video_url}`
+      } else if (isPodcast(src) && src.episode_url) {
+        key = `pod:${src.episode_url}`
+      } else if (src.doc_id) {
+        key = `doc:${src.doc_id}`
+      } else if (src.filename || src.source || src.doc_type) {
+        key = `generic:${src.source || ''}:${src.doc_type || ''}:${src.filename || ''}`
+      } else {
+        // Fallback: treat as unique to avoid accidental merges
+        key = `unique:${Math.random().toString(36).slice(2)}`
+      }
+
+      const existing = map.get(key)
+      if (!existing) {
+        map.set(key, src)
+      } else {
+        const existingScore =
+          typeof existing.score === 'number' ? existing.score : -Infinity
+        const newScore =
+          typeof src.score === 'number' ? src.score : -Infinity
+        if (newScore > existingScore) {
+          map.set(key, src)
+        }
+      }
+    }
+
+    return Array.from(map.values())
+  }
+
+  const dedupedSources = dedupeSources(results.sources || [])
+
   return (
     <div className="min-h-screen bg-gray-50" suppressHydrationWarning>
       <Navbar />
@@ -102,45 +144,6 @@ export default function ResultsPage() {
               </p>
             )}
           </div>
-
-          {/* Original Request Section */}
-          {results.original_request && (
-            <section className="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500">
-              <div className="flex items-center mb-4">
-                <svg className="w-6 h-6 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <h2 className="text-xl font-semibold text-gray-900">
-                  Original Request
-                </h2>
-              </div>
-              
-              {/* Keywords */}
-              {results.topics && results.topics.length > 0 && (
-                <div className="mb-4">
-                  <p className="text-sm font-medium text-gray-600 mb-2">Keywords:</p>
-                  <div className="flex flex-wrap gap-2">
-                    {results.topics.map((topic: string, index: number) => (
-                      <span
-                        key={index}
-                        className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 capitalize"
-                      >
-                        {topic}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
-              {/* Original Text */}
-              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-                <p className="text-sm font-medium text-gray-600 mb-2">Your Request:</p>
-                <div className="whitespace-pre-wrap text-gray-700">
-                  {results.original_request}
-                </div>
-              </div>
-            </section>
-          )}
 
           {/* AI Response Section */}
           <section className="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500">
@@ -186,13 +189,14 @@ export default function ResultsPage() {
               </h2>
             </div>
             
-            {results.sources && results.sources.length > 0 ? (
+            {dedupedSources && dedupedSources.length > 0 ? (
               <div className="space-y-4">
                 <p className="text-sm text-gray-600 mb-4">
-                  The following {results.sources.length} document{results.sources.length !== 1 ? 's were' : ' was'} retrieved 
+                  The following {dedupedSources.length} document
+                  {dedupedSources.length !== 1 ? 's were' : ' was'} retrieved 
                   and used as context for generating the refined content:
                 </p>
-                {results.sources.map((source: any, index: number) => (
+                {dedupedSources.map((source: any, index: number) => (
                   <div
                     key={index}
                     className="border border-purple-200 rounded-lg p-5 hover:shadow-md transition-shadow bg-gradient-to-r from-white to-purple-50"
@@ -372,11 +376,11 @@ export default function ResultsPage() {
                             </p>
                           </div>
                         )}
-                        {source.selftext && (
+                        {(source.detailed_explanation || source.selftext) && (
                           <div className="mt-3 p-3 bg-orange-50 rounded border border-orange-200">
-                            <p className="text-xs font-medium text-gray-600 mb-1">Post Text:</p>
+                            <p className="text-xs font-medium text-gray-600 mb-1">discussion_description:</p>
                             <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                              {source.selftext}
+                              {source.detailed_explanation || source.selftext}
                             </p>
                           </div>
                         )}
@@ -490,6 +494,45 @@ export default function ResultsPage() {
               </div>
             )}
           </section>
+
+          {/* Original Request Section (moved to bottom) */}
+          {results.original_request && (
+            <section className="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500">
+              <div className="flex items-center mb-4">
+                <svg className="w-6 h-6 text-blue-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Original Request
+                </h2>
+              </div>
+              
+              {/* Keywords */}
+              {results.topics && results.topics.length > 0 && (
+                <div className="mb-4">
+                  <p className="text-sm font-medium text-gray-600 mb-2">Keywords:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {results.topics.map((topic: string, index: number) => (
+                      <span
+                        key={index}
+                        className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 capitalize"
+                      >
+                        {topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Original Text */}
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                <p className="text-sm font-medium text-gray-600 mb-2">Your Request:</p>
+                <div className="whitespace-pre-wrap text-gray-700">
+                  {results.original_request}
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* Actions */}
           <section className="flex justify-between items-center bg-white rounded-lg shadow p-6">
