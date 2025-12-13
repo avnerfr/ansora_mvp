@@ -15,33 +15,45 @@ logging.basicConfig(
 
 
 asset_type_rules = {
-    "email": """
-subject: 1 line, pain-based,
-opening: exactly 2 sentences (context → pain),
-bullets: exactly 3 bullets,
-    1) Pain (practitioner phrasing)
-    2) Insight (why it happens)
-    3) Solution/value
-cta: 1 sentence
+"email": """
+subject: 1 short, sharp line focused on a real problem or curiosity
+
+opening: 2 sentences max.
+- sentence 1: context that shows relevance to their world
+- sentence 2: the specific pain you're seeing teams struggle with
+
+body: 3 bullets (but written as natural bullets, not labeled)
+- bullet 1: describe the pain in practitioner language (no “pain:”)
+- bullet 2: explain the underlying reason it keeps happening (without calling it "insight")
+- bullet 3: how the solution changes their day-to-day (practical, not salesy)
+
+cta: 1 short, friendly sentence offering a quick chat or resource
 """,
-    "one-pager": """
-headline: 1 line
-subhead: 1 line
-lead paragraph: max 2 sentences
-problems: exactly 6 bullets, practitioner phrasing only
-features: exactly 4 bullets starting with "Feature:" mapped to problems
-business impact: exactly 3 bullets, high-level, no numbers
+"one-pager": """
+headline: 1 line: problem-oriented or value-oriented
+subhead: 1 line: clarifies who it’s for or why it matters
+
+lead paragraph: up to 2 sentences grounding the real-world context
+problems: 6 bullets written in practitioner voice, no labels, no abstract phrasing
+features: 4 bullets, each starting with "Feature:", each mapped implicitly to a problem (no need to indicate the problem explicitly)
+business impact: 3 bullets that describe outcomes in natural language (no numbers required)
+
 cta: 1 line
 """,
-    "landing page": """
-headline: 1 line
-subhead: 1 line
+"landing page": """
+headline: 1 line, sharp, focused on the core value
+subhead: 1 line, clarifying what pain it solves or what outcome it unlocks
 """,
     # Support both "blog" (UI) and "blog post" (notebook wording)
     "blog": """
-intro paragraph: max 2 sentences
-sections: exactly 3 sections with one-line subheads
-conclusion: 1 line
+intro paragraph: 1–2 sentences grounding the problem in a real-world scenario
+
+sections: 3 sections
+each section:
+- 1 line subhead
+- 1 paragraph (4–6 lines) with practical insights, not generic commentary
+
+conclusion: 1 line that ties together the point or gives a forward-looking takeaway
 """,
     "blog post": """
 intro paragraph: max 2 sentences
@@ -165,6 +177,42 @@ From references provide all available information.
 
 VECTOR_DB_RETREIVAL_PROMPT = """
 You are a retrieval query condenser for a RAG system.
+Your goal is to transform the user’s request into 1–3 dense, self-contained sentences that are fully optimized for vector similarity search.
+
+Inputs:
+
+1. User text: the user’s question or instruction
+
+2. Backgrounds: prior context such as system instructions or discussion history
+
+Your task:
+
+1. Read the User text and Backgrounds carefully.
+2. Identify the precise information need, including relevant entities, technologies, domains, ICP roles, and constraints.
+3. Remove all meta-instructions (style, tone, formatting) and any content that doesn’t help retrieve documents.
+4. Produce 1–3 standalone sentences, each one clear and independent, containing the core topics the retrieval system should search for.
+5. Make the sentences rich with meaningful domain terms relevant to AlgoSec contexts (e.g., hybrid networks, security policy management, firewall change processes, application connectivity, cloud environments, automation, DevOps/DevSecOps, compliance, risk reduction).
+6. Do not use generic buzzwords.
+7. Do not refer back to the text (“as described above”).
+8. Output only the sentences. No bullets, numbering, explanations, or code blocks.
+
+Output format:
+1 to 3 standalone sentences, each fully meaningful on its own, separated by line breaks. No additional text.
+
+Example Input:
+User text: How does our solution for managing security in hybrid cloud differ from competitors?
+Backgrounds: discussion about policy cleanup, visibility, automation
+
+Example Output:
+Hybrid cloud security management practices that compare automated policy analysis, risk validation, and unified visibility across on-prem and cloud networks.
+Differences in application-centric policy automation and compliance workflows between competing hybrid network security platforms.
+Evaluation of how automated policy cleanup and change management reduce risk and operational overhead in hybrid environments.
+
+
+"""
+
+VECTOR_DB_RETREIVAL_PROMPT_1 = """
+You are a retrieval query condenser for a RAG system.
 Your goal is to transform a long, messy input into a small number of dense, information-rich sentences that are optimized for vector search.
 
 You are given two inputs:
@@ -190,7 +238,7 @@ this is the user text: {{user_provided_text}}
 
 """
 
-VECTOR_DB_RETREIVAL_PROMPT_1 = """
+VECTOR_DB_RETREIVAL_PROMPT_2 = """
 You are a retrieval query condenser for a RAG system.
 Your goal is to transform a long, messy input into a small number of dense, information-rich sentences that are optimized for vector search.
 
