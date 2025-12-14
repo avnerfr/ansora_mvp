@@ -4,6 +4,7 @@ from typing import List
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
+from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch
 from core.config import settings
 import uuid
 import logging
@@ -143,11 +144,10 @@ class VectorStore:
         )
         return vector_store.as_retriever(search_kwargs={"k": k})
     
-    def search_reddit_posts(self, query: str, k: int = 3) -> List[Document]:
+    def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post") -> List[Document]:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
             logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}")
-            logger.info(f"Query text: '{query[:100]}...'")
             
             # Check if collection exists
             logger.info("Connecting to cloud Qdrant...")
@@ -230,98 +230,209 @@ class VectorStore:
                 collection_name=collection_name_to_use,
                 query=query_vector,
                 limit=k,
-                with_payload=True
+                with_payload=True,
+                prefetch=[
+                    Prefetch(
+                        filter=Filter(
+                            must=[
+                                FieldCondition(
+                                    key="doc_type",
+                                    match=MatchValue(value=doc_type)
+                                )
+                            ]
+                        ),
+                        limit=50
+                    )
+                ],
             )
             logger.info(f"✓ Search completed: {len(search_results.points)} results")
-            
-            # Convert Qdrant results to LangChain Documents
-            documents = []
-            for i, point in enumerate(search_results.points, 1):
-                # Log the payload to see what fields are available
-                logger.info(f"Point {i} payload keys: {list(point.payload.keys())}")
-                
-                # Extract text from payload – prefer full text, then snippet/citation
-                payload = point.payload or {}
-                text = (
-                    payload.get("text")
-                    or payload.get("content")
-                    or payload.get("snippet")
-                    or payload.get("citation")
-                    or ""
-                )
-                
-                # Determine source type and doc type
-                source = point.payload.get("source", "unknown")
-                doc_type = point.payload.get("doc_type", "unknown")
-                
-                # Build metadata with all available fields (use None instead of "Unknown" for optional fields)
-                metadata = {
-                    "source": source,
-                    "doc_type": doc_type,
-                    "score": point.score,  # Similarity score from Qdrant
-
-                    # Common fields across all document types
-                    'citation': point.payload.get("citation"),
-                    'citation_start_time': point.payload.get("citation_start_time"),
-                    'icp_role_type': point.payload.get("icp_role_type"),
-                    'title': point.payload.get("title"),
-                    'channel': point.payload.get("channel"),
-                    'type': point.payload.get("type"),
-
-                    # Podcast-specific fields
-                    'episode_url': point.payload.get("episode_url"),
-                    'episode_number': point.payload.get("episode_number"),
-                    'mp3_url': point.payload.get("mp3_url"),
-
-                    # YouTube-specific fields
-                    'video_url': point.payload.get("video_url"),
-                    'description': point.payload.get("description"),
-
-                    # Reddit-specific fields
-                    'selftext': point.payload.get("selftext"),
-                    'thread_author': point.payload.get("thread_author"),
-                    'subreddit': point.payload.get("subreddit"),
-                    'thread_url': point.payload.get("thread_url"),
-                    # Support both legacy "detailed-explanation" and new "detailed_description"
-                    'detailed-explanation': point.payload.get("detailed-explanation") or point.payload.get("discussion_description"),
-                    'detailed_description': point.payload.get("detailed_description"),
-
-                }
-                
-                # Generate appropriate filename based on doc_type
-                if doc_type == "yt_summary":
-                    filename = f"YouTube: {point.payload.get('title', '')}"
-                elif doc_type == "reddit_post":
-                    filename = f"Reddit Post: {point.payload.get('title', 'Untitled')}"
-                elif doc_type == "reddit_thread":
-                    filename = f"Reddit Thread: {point.payload.get('title', 'Untitled')}"
-                elif doc_type == "reddit_comment":
-                    filename = f"Reddit Comment by {point.payload.get('author_fullname', 'Unknown')}"
-                elif doc_type == "podcast_summary":
-                    filename = f"Podcast Summary: {point.payload.get('title', 'Untitled')}"
-                else:
-                    filename = f"{source.title()}: {doc_type.replace('_', ' ').title()}"
-                
-                metadata["filename"] = filename
-
-                # Log what we extracted
-                logger.info(f"Extracted metadata: source={source}, doc_type={doc_type}, filename={filename}, score={point.score}")
-                
-                # Create Document
-                doc = Document(
-                    page_content=text,
-                    metadata=metadata
-                )
-                documents.append(doc)
-                
-            
-            logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
-            return documents
-            
+            return search_results.points
         except Exception as e:
             logger.error(f"❌ Error searching Documents: {type(e).__name__}: {str(e)}", exc_info=True)
             return []
+            
+    def search_reddit_posts(self, query: str, k: int = 3) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "reddit_post")
+
+        # Convert Qdrant results to LangChain Documents
+        documents = []
+        for i, point in enumerate(search_results_points, 1):
+            # Log the payload to see what fields are available
+            #logger.info(f"Point {i} payload keys: {list(point.payload.keys())}")
+            
+            # Extract text from payload – prefer full text, then snippet/citation
+            payload = point.payload or {}
+            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation"))        or ""
+            
+            doc_type = "reddit_post"
+            
+            # Build metadata with all available fields (use None instead of "Unknown" for optional fields)
+            metadata = {
+                "doc_type": doc_type,
+                "score": point.score,  # Similarity score from Qdrant
+
+                # Common fields across all document types
+                'title': payload.get("title"),
+                'citation': payload.get("citation"),
+                "detailed_description": payload.get("detailed_description"),
+                'selftext': payload.get("selftext"),
+                "summary": payload.get("summary"),
+                "key_issues": payload.get("key_issues"),
+                "pain_phrases": payload.get("pain_phrases"),
+                "emotional_triggers": payload.get("emotional_triggers"),
+                "buyer_language": payload.get("buyer_language"),
+                "implicit_risks": payload.get("implicit_risks"),
+                'url': payload.get("thread_url"),
+                'thread_author': payload.get("thread_author"),
+                'subreddit': payload.get("subreddit"),
+
+                'citation_start_time': payload.get("citation_start_time"),
+                'icp_role_type': payload.get("icp_role_type"),
+                "ups": payload.get("ups"),
+                "tone": payload.get("tone"),
+                "classification": payload.get("classification"),
+                "date_created_utc": payload.get("date_created_utc"),
+                "flair_text": payload.get("flair_text"),
+            }
+
+
+            # Generate appropriate filename based on doc_type
+            filename = f"Reddit Post: {payload.get('title', 'Untitled')}"
+           
+            metadata["filename"] = filename
+
+            # Log what we extracted
+            logger.info(f"Extracted Reddit Post metadata:  title={filename}, summary={payload.get('summary', 'Untitled')}, score={point.score}")
+
+            # Create Document
+            doc = Document(
+                page_content=text,
+                metadata=metadata
+            )
+            documents.append(doc)
+            
+        
+        logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
+        return documents
+        
+
     
+    def search_youtube_summaries(self, query: str, k: int = 3) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "youtube_summary")
+
+        # Convert Qdrant results to LangChain Documents
+        documents = []
+        for i, point in enumerate(search_results_points, 1):
+            # Log the payload to see what fields are available
+            #logger.info(f"Point {i} payload keys: {list(point.payload.keys())}")
+            
+            # Extract text from payload – prefer full text, then snippet/citation
+            payload = point.payload or {}
+            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation"))        or ""
+            
+            doc_type = "youtube_summary"
+            
+            # Build metadata with all available fields (use None instead of "Unknown" for optional fields)
+            metadata = {
+                "doc_type": doc_type,
+                "score": point.score,  # Similarity score from Qdrant
+
+                # Common fields across all document types
+                'citation': point.payload.get("citation"),
+                'citation_start_time': point.payload.get("citation_start_time"),
+                'icp_role_type': point.payload.get("icp_role_type"),
+                'title': point.payload.get("title"),
+                'channel': point.payload.get("channel"),
+                'type': point.payload.get("type"),
+
+                # YouTube-specific fields
+                'url': point.payload.get("video_url"),
+                'description': point.payload.get("description"),
+ 
+                'detailed_description': point.payload.get("detailed_description"),
+
+            }
+            
+            # Generate appropriate filename based on doc_type
+            filename = f"YouTube Summary: {point.payload.get('title', 'Untitled')}"
+           
+            metadata["filename"] = filename
+
+            # Log what we extracted
+            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}")
+            
+            # Create Document
+            doc = Document(
+                page_content=text,
+                metadata=metadata
+            )
+            documents.append(doc)
+            
+        
+        logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
+        return documents
+        
+
+        return []
+    def search_podcast_summaries(self, query: str, k: int = 3) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "podcast_summary")
+
+        # Convert Qdrant results to LangChain Documents
+        documents = []
+        for i, point in enumerate(search_results_points, 1):
+            # Log the payload to see what fields are available
+            #logger.info(f"Point {i} payload keys: {list(point.payload.keys())}")
+            
+            # Extract text from payload – prefer full text, then snippet/citation
+            payload = point.payload or {}
+            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation"))        or ""
+            
+            doc_type = "podcast_summary"
+            
+            # Build metadata with all available fields (use None instead of "Unknown" for optional fields)
+            metadata = {
+                "doc_type": doc_type,
+                "score": point.score,  # Similarity score from Qdrant
+
+                # Common fields across all document types
+                'citation': point.payload.get("citation"),
+                'citation_start_time': point.payload.get("citation_start_time"),
+                'icp_role_type': point.payload.get("icp_role_type"),
+                'title': point.payload.get("title"),
+                'channel': point.payload.get("channel"),
+                'type': point.payload.get("type"),
+
+                # Podcast-specific fields
+                'episode_url': point.payload.get("episode_url"),
+                'episode_number': point.payload.get("episode_number"),
+                'mp3_url': point.payload.get("mp3_url"),
+
+                'detailed_description': point.payload.get("detailed_description"),
+
+            }
+            
+            # Generate appropriate filename based on doc_type
+            filename = f"Podcast Summary: {point.payload.get('title', 'Untitled')}"
+        
+            metadata["filename"] = filename
+
+            # Log what we extracted
+            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}")
+            
+            # Create Document
+            doc = Document(
+                page_content=text,
+                metadata=metadata
+            )
+            documents.append(doc)
+            
+        
+        logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
+        return documents
+        
+
+        return []
+
     def clear_user_collection(self, user_id: int) -> bool:
         """Delete a user's collection from local Qdrant."""
         try:

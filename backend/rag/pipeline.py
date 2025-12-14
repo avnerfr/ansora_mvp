@@ -5,6 +5,7 @@ from rag.vectorstore import vector_store
 from core.config import settings
 from typing import List, Dict, Any, Optional
 import logging
+import re
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ cta: 1 short, friendly sentence offering a quick chat or resource
 """,
 "one-pager": """
 headline: 1 line: problem-oriented or value-oriented
-subhead: 1 line: clarifies who it’s for or why it matters
+subhead: 1 line: clarifies who it's for or why it matters
 
 lead paragraph: up to 2 sentences grounding the real-world context
 problems: 6 bullets written in practitioner voice, no labels, no abstract phrasing
@@ -46,19 +47,37 @@ subhead: 1 line, clarifying what pain it solves or what outcome it unlocks
 """,
     # Support both "blog" (UI) and "blog post" (notebook wording)
     "blog": """
-intro paragraph: 1–2 sentences grounding the problem in a real-world scenario
+intro paragraph: 1-2 sentences grounding the problem in a real-world scenario
 
 sections: 3 sections
 each section:
 - 1 line subhead
-- 1 paragraph (4–6 lines) with practical insights, not generic commentary
+- 1 paragraph (4-6 lines) with practical insights, not generic commentary
 
 conclusion: 1 line that ties together the point or gives a forward-looking takeaway
 """,
     "blog post": """
-intro paragraph: max 2 sentences
-sections: exactly 3 sections with one-line subheads
-conclusion: 1 line
+- Length: Short-form thought leadership (400-600 words max)
+- Audience: Senior practitioners (Security, IAM, Platform, DevSecOps)
+- Tone: Educational, opinionated, practitioner-level. No marketing language.
+
+STRUCTURE:
+1. INTRO (max 2 sentences)
+   - Start with a concrete observation from real-world operations.
+   - No industry clichés, no generic “security is hard” statements.
+
+2. BODY: Exactly 3 sections
+   - Each section must have:
+     • A ONE-LINE subhead that states a clear insight or claim (not a topic)
+     • 2-3 short paragraphs explaining:
+       - What teams believe
+       - Why that belief breaks down in practice
+       - The real operational consequence
+
+3. CONCLUSION (exactly 1 sentence)
+   - Reframe the problem in a sharper, more actionable way.
+   - Do NOT pitch a product.
+
 """,
 }
 
@@ -207,7 +226,8 @@ Example Output:
 Hybrid cloud security management practices that compare automated policy analysis, risk validation, and unified visibility across on-prem and cloud networks.
 Differences in application-centric policy automation and compliance workflows between competing hybrid network security platforms.
 Evaluation of how automated policy cleanup and change management reduce risk and operational overhead in hybrid environments.
-
+this is the backgrounds of the query: {{backgrounds}}
+this is the user text: {{user_provided_text}}
 
 """
 
@@ -415,6 +435,50 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
     return sources
 
 
+def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str) -> List[Any]:
+    """
+    Merge and filter duplicate documents based on a metadata key (e.g. 'url', 'video_url').
+    Keeps the first occurrence for each unique key value.
+    """
+    logger.info("Merging and filtering duplicate documents by '%s'", merger_by)
+    merged_docs: list[Any] = []
+    seen_values: set[str] = set()
+
+    for doc in docs:
+        metadata = doc.metadata if hasattr(doc, "metadata") else {}
+        raw_value = metadata.get(merger_by)
+
+        # Normalize to string for comparison; None becomes empty string
+        value_str = str(raw_value) if raw_value is not None else ""
+
+        if value_str in seen_values:
+            continue
+
+        seen_values.add(value_str)
+        merged_docs.append(doc)
+
+    logger.info("After merge/filter by '%s': %d → %d", merger_by, len(docs), len(merged_docs))
+    return merged_docs
+
+
+"""
+Chunk the text into smaller pieces for retrieval, without external dependencies.
+"""
+def chunking_model(text: str) -> List[str]:
+    """
+    Naive sentence chunker:
+    - Splits on ., !, ? followed by whitespace.
+    - Falls back to a single chunk if anything goes wrong.
+    """
+    try:
+        if not text:
+            return []
+        chunks = re.split(r'(?<=[.!?])\s+', text)
+        return [c.strip() for c in chunks if c.strip()]
+    except Exception as e:
+        print(f"Error chunking text: {e}")
+        return [text]
+
 async def process_rag(
     user_id: int,
     backgrounds: List[str],
@@ -458,17 +522,11 @@ async def process_rag(
     retrieval_prompt = retrieval_prompt.replace("{{user_provided_text}}", marketing_text)
     retrieval_prompt = retrieval_prompt.replace("{{backgrounds}}", backgrounds_str)
 
-    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT")
+    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT $$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
     logger.info(retrieval_prompt)
     logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
     retrieval_query = marketing_text
     try:
-        # NOTE:
-        # Some newer OpenAI models (e.g., reasoning / latest GPT models)
-        # only support the default temperature value of 1.0 and will
-        # return a 400 error if another value (like the LangChain default
-        # of 0.7) is sent. We explicitly set temperature=1.0 here to
-        # avoid sending an unsupported value.
         retrieval_llm = ChatOpenAI(
             model_name="gpt-4o", #"gpt-5",
             openai_api_key=settings.OPENAI_API_KEY,
@@ -478,7 +536,7 @@ async def process_rag(
         rq_response = await retrieval_llm.ainvoke(rq_messages)
         retrieval_query = (rq_response.content or marketing_text).strip()
         logger.info(f"✓ Retrieval query built (length={len(retrieval_query)} chars)")
-        logger.info("################################################################################# Retrieval query")
+        logger.info("############################# Retrieval query ###################################")
         logger.info(f"Retrieval query:\n{retrieval_query}")
         logger.info("#################################################################################")
     except Exception as e:
@@ -495,12 +553,36 @@ async def process_rag(
 
     # External vector search (e.g., YouTube/Reddit/Podcasts)
     try:
-        logger.info("Searching external sources (YouTube/Reddit/Podcasts) from cloud Qdrant for references...")
-        external_docs = vector_store.search_reddit_posts(retrieval_query, k=10)
-        logger.info(f"✓ Retrieved {len(external_docs)} external reference documents")
+        # chunk retreival query using sentence chunking
+        reddit_docs = []
+        youtube_docs = []
+        podcast_docs = []
+        retrieval_query_chunks = chunking_model(retrieval_query)
+        for chunk in retrieval_query_chunks:
+            logger.info(f"Searching for chunk: {chunk} in reddit posts")
+            reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10))
+
+        # merge and filter duplicate documents with the same url
+        external_docs = merge_and_filter_duplicate_documents(reddit_docs, "url")
+        logger.info(f"Merged and filtered duplicate documents: {len(external_docs)}")
+
+
+        for chunk in retrieval_query_chunks:
+            logger.info(f"Searching for chunk: {chunk} in youtube summaries")
+            youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3))
+        external_docs.extend(merge_and_filter_duplicate_documents(youtube_docs, "url"))
+        logger.info(f"Merged and filtered duplicate documents: {len(external_docs)}")
+
+        for chunk in retrieval_query_chunks:
+            logger.info(f"Searching for chunk: {chunk} in reddit posts")
+            podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3))
+
+        external_docs.extend(merge_and_filter_duplicate_documents(podcast_docs, "url"))
+
     except Exception as e:
         logger.warning(f"⚠ Error retrieving external reference documents: {type(e).__name__}: {str(e)}")
         external_docs = []
+
 
     # For RAG context, we now use the external documents (no persisted user documents).
     retrieved_docs = external_docs
@@ -512,6 +594,12 @@ async def process_rag(
     seen_snippets: set[str] = set()
     for i, doc in enumerate(retrieved_docs, 1):
         metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+
+        # create language to share with the LLM
+        
+        logger.info("*"*100)
+        logger.info(f"metadata: {metadata} ")
+        logger.info("*"*100)
         filename = metadata.get("filename", "Unknown")
         content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
         snippet = content[:1000]
