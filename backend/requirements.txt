@@ -18,6 +18,7 @@ sentence-transformers>=2.2.0
 # Removed: langchain==0.2.16 (meta-package, not needed - we use specific packages)
 pypdf==3.17.4
 python-pptx==0.6.23
+nltk==3.8.1
 # Optional: OCR support (can be removed if not needed)
 # pillow==10.1.0
 # pytesseract==0.3.10
