@@ -11,7 +11,9 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     CharacterTextSplitter
 )
+
 import nltk
+
 nltk.download('punkt')
 # Configure logging
 logger = logging.getLogger(__name__)

@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir --user --index-url https://download.pytorch.org/w
 # Use --no-deps for packages that might pull unnecessary extras
 RUN pip install --no-cache-dir --user -r requirements.txt
 
+# Download NLTK data needed for sentence tokenization
+RUN python -c "import nltk; nltk.download('punkt')"
+
 # Clean up pip cache and temporary files
 RUN rm -rf /root/.cache/pip
 
