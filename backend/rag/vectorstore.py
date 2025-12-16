@@ -231,19 +231,23 @@ class VectorStore:
                 query=query_vector,
                 limit=k,
                 with_payload=True,
-                prefetch=[
-                    Prefetch(
-                        filter=Filter(
-                            must=[
-                                FieldCondition(
-                                    key="doc_type",
-                                    match=MatchValue(value=doc_type)
-                                )
-                            ]
-                        ),
-                        limit=50
-                    )
-                ],
+                with_vectors=False,
+                #prefetch=[
+                #    Prefetch(
+                #        filter=Filter(
+                #            must=[
+                #                FieldCondition(
+                #                    key="doc_type",
+                #                    match=MatchValue(value=doc_type)
+                #                )
+                #            ]
+                #        ),
+                #        limit=50
+                #    )
+                #],
+                query_filter=Filter(
+                    must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type))]
+                ),
             )
             logger.info(f"✓ Search completed: {len(search_results.points)} results")
             return search_results.points

@@ -6,7 +6,11 @@ from core.config import settings
 from typing import List, Dict, Any, Optional
 import logging
 import re
-
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter,
+    CharacterTextSplitter
+)
+import nltk
 # Configure logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -161,8 +165,10 @@ INPUTS
 Use the following tone and style guidelines:
 {{tone_rules[tone]}}
 
-The user provided the following original text: {{user_provided_text}}
-Also make sure to use language and key insights from the following context: {{vector_search_context}}
+The user provided the following original text: 
+{{user_provided_text}}
+Also make sure to use language and key insights from the following context: 
+{{vector_search_context}}
 
 Use cases / key themes to prioritize: {{backgrounds}}
 
@@ -195,40 +201,43 @@ From references provide all available information.
 
 
 VECTOR_DB_RETREIVAL_PROMPT = """
-You are a retrieval query condenser for a RAG system.
-Your goal is to transform the user’s request into 1–3 dense, self-contained sentences that are fully optimized for vector similarity search.
+You are a retrieval query generator for a practitioner-first RAG system.
+Task: Convert any user input—technical, operational, organizational, or even career/personal—into 3–5 concrete, operational search queries. Queries must reflect real-life practitioner struggles and symptoms, phrased as if a practitioner is asking for help in forums, postmortems, or operational discussions.
 
-Inputs:
+INPUTS:
+User text: any concept, question, or statement
+Backgrounds: high-level domain context (e.g., network security, IAM, cloud, DevOps, IT operations)
 
-1. User text: the user’s question or instruction
+STEP 1 – Understand the input:
+Decide the nature of the input: technical issue, abstract concept, process/policy problem, human/organizational pain.
+If the input is abstract (label, framework, role, or principle), discard the abstract label and identify the concrete struggles it may cause.
+If the input is concrete, focus on the real operational consequences of the stated problem.
 
-2. Backgrounds: prior context such as system instructions or discussion history
+STEP 2 – Generate operational failure angles:
+For each input, generate queries that reflect pain points, failures, or risky situations that a practitioner would encounter. Consider:
+Systems or processes that break unexpectedly
+Access, permissions, or workflow issues
+Communication or ownership gaps
+Anything teams postpone because fixing it feels risky
+Workload, burnout, or human factor problems
 
-Your task:
+STEP 3 – Language & style:
+Write as if it were a Reddit post title or opening paragraph of a help request
+Be specific about symptoms, consequences, or frustration
+Avoid: abstract labels, frameworks, solutions, best practices, vendors, product names, or analyst/marketing language
 
-1. Read the User text and Backgrounds carefully.
-2. Identify the precise information need, including relevant entities, technologies, domains, ICP roles, and constraints.
-3. Remove all meta-instructions (style, tone, formatting) and any content that doesn’t help retrieve documents.
-4. Produce 1–3 standalone sentences, each one clear and independent, containing the core topics the retrieval system should search for.
-5. Make the sentences rich with meaningful domain terms relevant to AlgoSec contexts (e.g., hybrid networks, security policy management, firewall change processes, application connectivity, cloud environments, automation, DevOps/DevSecOps, compliance, risk reduction).
-6. Do not use generic buzzwords.
-7. Do not refer back to the text (“as described above”).
-8. Output only the sentences. No bullets, numbering, explanations, or code blocks.
+STEP 4 – Output rules:
+Produce 3 to 5 standalone sentences
+Each sentence must describe a unique, concrete operational struggle
+One sentence per line
+Do not add bullets, numbering, explanations, or extra text
 
-Output format:
-1 to 3 standalone sentences, each fully meaningful on its own, separated by line breaks. No additional text.
-
-Example Input:
-User text: How does our solution for managing security in hybrid cloud differ from competitors?
-Backgrounds: discussion about policy cleanup, visibility, automation
-
-Example Output:
-Hybrid cloud security management practices that compare automated policy analysis, risk validation, and unified visibility across on-prem and cloud networks.
-Differences in application-centric policy automation and compliance workflows between competing hybrid network security platforms.
-Evaluation of how automated policy cleanup and change management reduce risk and operational overhead in hybrid environments.
-this is the backgrounds of the query: {{backgrounds}}
+FINAL VALIDATION:
+Check each sentence: it must directly reflect the input in some way
+No sentence should include the original abstract label or synonyms if the input was abstract
+Each sentence must describe a practically observable problem or risk
 this is the user text: {{user_provided_text}}
-
+this is the backgrounds of the query: {{backgrounds}}
 """
 
 VECTOR_DB_RETREIVAL_PROMPT_1 = """
@@ -464,7 +473,7 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str) -> Lis
 """
 Chunk the text into smaller pieces for retrieval, without external dependencies.
 """
-def chunking_model(text: str) -> List[str]:
+def chunking_model_naive(text: str) -> List[str]:
     """
     Naive sentence chunker:
     - Splits on ., !, ? followed by whitespace.
@@ -478,6 +487,46 @@ def chunking_model(text: str) -> List[str]:
     except Exception as e:
         print(f"Error chunking text: {e}")
         return [text]
+
+def chunking_model_nltk(text: str) -> List[str]:
+    """
+    Use nltk to chunk the text into smaller pieces.
+    """
+    try:
+        if not text:
+            return []
+        chunks = nltk.sent_tokenize(text)
+        return [c.strip() for c in chunks if c.strip()]
+    except Exception as e:
+        print(f"Error chunking text: {e}")
+        return [text]
+
+def chunking_model_langchain(text: str,recursive_splitter = False) -> List[str]:
+    """
+    Chunk the text into smaller pieces for retrieval using LangChain.
+    """
+    try:
+        if not text:
+            return []
+        if recursive_splitter:
+            text_splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=0,
+                length_function=len,
+            )
+        else:
+            text_splitter = CharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=0,
+                length_function=len,
+            )
+        chunks = text_splitter.split_text(text)
+        return [c.strip() for c in chunks if c.strip()]
+    except Exception as e:
+        print(f"Error chunking text: {e}")
+        return [text]   
+
+    
 
 async def process_rag(
     user_id: int,
@@ -558,71 +607,59 @@ async def process_rag(
         youtube_docs = []
         podcast_docs = []
         retrieval_query_chunks = chunking_model(retrieval_query)
+
         for chunk in retrieval_query_chunks:
             logger.info(f"Searching for chunk: {chunk} in reddit posts")
             reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10))
 
         # merge and filter duplicate documents with the same url
-        external_docs = merge_and_filter_duplicate_documents(reddit_docs, "url")
-        logger.info(f"Merged and filtered duplicate documents: {len(external_docs)}")
+        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "url")
+        # merge the following keys into text with line breaks "title", "summary", "detailed_description", "selftext", "key_issues", "pain_phrases", "emotional_triggers", "buyer_language", "implicit_risks"
+        reddit_filtered_docs_text = "\n\n".join([f"{doc.metadata.get('title', '')}\n{doc.metadata.get('summary', '')}\n{doc.metadata.get('citation', '')}\n{doc.metadata.get('key_issues', '')}\n{",".join(doc.metadata.get('pain_phrases', ''))}\n{",".join(doc.metadata.get('emotional_triggers', ''))}\n{",".join(doc.metadata.get('buyer_language', ''))}\n{",".join(doc.metadata.get('implicit_risks', ''))}" for doc in reddit_filtered_docs])
 
+        external_docs.append({"type": "reddit", "text": reddit_filtered_docs_text})
 
         for chunk in retrieval_query_chunks:
             logger.info(f"Searching for chunk: {chunk} in youtube summaries")
             youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3))
-        external_docs.extend(merge_and_filter_duplicate_documents(youtube_docs, "url"))
-        logger.info(f"Merged and filtered duplicate documents: {len(external_docs)}")
+        
+        youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "title")
+        youtube_filtered_docs_text = "\n\n".join([f"{doc.metadata.get('title', '')}\n{doc.metadata.get('description', '')}\n{doc.metadata.get('citation', '')}" for doc in youtube_filtered_docs])
+        #logger.info(f"Youtube filtered docs text: {youtube_filtered_docs_text}")
+        external_docs.append({"type": "youtube", "text": youtube_filtered_docs_text})
 
         for chunk in retrieval_query_chunks:
-            logger.info(f"Searching for chunk: {chunk} in reddit posts")
+            logger.info(f"Searching for chunk: {chunk} in podcast summaries")
             podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3))
-
-        external_docs.extend(merge_and_filter_duplicate_documents(podcast_docs, "url"))
+        podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "title")
+        podcast_filtered_docs_text = "\n\n".join([f"{doc.metadata.get('title', '')}\n{doc.metadata.get('description', '')}\n{doc.metadata.get('citation', '')}" for doc in podcast_filtered_docs])
+        #logger.info(f"Podcast filtered docs text: {podcast_filtered_docs_text}")
+        external_docs.append({"type": "podcast", "text": podcast_filtered_docs_text})
 
     except Exception as e:
         logger.warning(f"⚠ Error retrieving external reference documents: {type(e).__name__}: {str(e)}")
         external_docs = []
-
-
     # For RAG context, we now use the external documents (no persisted user documents).
     retrieved_docs = external_docs
-    logger.info(f"✓ Total context sources: {len(retrieved_docs)} external documents")
+    #logger.info(f"✓ Total context sources: {len(retrieved_docs)} external documents")
     
     # Format context from retrieved documents
-    logger.info("Formatting context from retrieved documents...")
+    #logger.info("Formatting context from retrieved documents...")
     context_parts: list[str] = []
     seen_snippets: set[str] = set()
     for i, doc in enumerate(retrieved_docs, 1):
         metadata = doc.metadata if hasattr(doc, 'metadata') else {}
 
-        # create language to share with the LLM
-        
-        logger.info("*"*100)
-        logger.info(f"metadata: {metadata} ")
-        logger.info("*"*100)
-        filename = metadata.get("filename", "Unknown")
-        content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
-        snippet = content[:1000]
-
-        # Avoid adding identical snippets multiple times (can happen with
-        # overlapping chunks or duplicate content in the vector store).
-        if snippet in seen_snippets:
-            logger.debug(f"  Skipping duplicate context snippet from {filename}")
-            continue
-
-        seen_snippets.add(snippet)
-        context_parts.append(f"[From {filename}]: {snippet}")
-        logger.debug(f"  Context part {i} from {filename}: {len(content)} chars (snippet len={len(snippet)})")
-    
-    vector_search_context = (
-        "\n\n".join(context_parts) if context_parts else "No relevant documents found."
-    )
+        snippet = doc.get("text", "")[:5000]
+        context_parts.append(f"{snippet}")
+   
+    vector_search_context = ( "\n".join(context_parts) if context_parts else "No relevant documents found."   )
     logger.info(
         f"✓ Vector search context built: {len(vector_search_context)} chars from {len(context_parts)} sources"
     )
     
     # Format backgrounds
-    logger.info(f"Backgrounds / use cases string: {backgrounds_str}")
+    #logger.info(f"Backgrounds / use cases string: {backgrounds_str}")
     
     # Build prompt - replace template variables
     # User can use:
