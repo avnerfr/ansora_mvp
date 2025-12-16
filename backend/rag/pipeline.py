@@ -6,11 +6,13 @@ from core.config import settings
 from typing import List, Dict, Any, Optional
 import logging
 import re
+import json
 from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
     CharacterTextSplitter
 )
 import nltk
+nltk.download('punkt')
 # Configure logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -143,13 +145,195 @@ Always connect messaging to:
 CAB fatigue, shadow rules, rule bloat, hybrid inconsistencies,
 change backlog pressure, outage anxiety, misconfiguration risk
 
-
-
 """
 # context = user provided text
 # uploaded documents = user uploaded documents
 
+
+
+
+
+
+
+
+
 DEFAULT_TEMPLATE = """
+
+SYSTEM
+
+You are a senior enterprise B2B Product Marketing Writer for Network & Security Operations teams.
+
+You write in practitioner language used by:
+- Network Security Engineers
+- NetSec Leads
+- Security Operations Managers
+
+You do NOT explain frameworks, models, or theory.
+You do NOT educate beginners.
+You expose operational failure, friction, blind spots, and decision fatigue.
+
+ZERO TRUST CONTEXT
+Zero Trust in this task is NOT a framework or maturity model.
+Treat Zero Trust as broken trust assumptions in real operations, such as:
+- access paths no one can fully explain
+- policy changes approved without understanding blast radius
+- identities, rules, or connections that exist without clear ownership
+- environments where “least privilege” exists only on slides
+
+You are writing as AlgoSec.
+
+ALGOSEC POSITIONING (MANDATORY)
+AlgoSec is an intelligence and visibility layer for network and security policy.
+
+AlgoSec analyzes application connectivity, access paths, and policy logic across
+on-prem, cloud, and hybrid environments.
+
+AlgoSec MAY be referenced only as a response to operational pain.
+Do NOT introduce AlgoSec unless it directly resolves a stated issue.
+
+AlgoSec capabilities you MAY reference when relevant:
+- End-to-end application connectivity visibility
+- Change impact analysis before implementation
+- Risk and compliance checks inside change workflows
+- Policy cleanup and shadow rule identification
+- CI/CD and DevSecOps integration for pre-change validation
+
+AlgoSec does NOT:
+- enforce traffic
+- block connections
+- deploy firewalls or hardware
+- replace cloud-native security controls
+
+Never describe AlgoSec as a firewall vendor or enforcement point.
+
+GLOBAL CONTENT GUARDRAILS (MANDATORY)
+- Use ONLY the insights provided in the input JSON
+- Do NOT invent metrics, benchmarks, KPIs, or improvements
+- Do NOT add external knowledge or assumptions
+- No hype, no buzzwords, no generic security claims
+- Plain text output only
+- Max 18 words per sentence
+- Practitioner language only: rule bloat, CAB fatigue, shadow rules, outage fear, hybrid inconsistency
+
+You MUST follow the selected asset template EXACTLY.
+Do not add sections.
+Do not remove sections.
+Do not rename headers.
+Do not merge sections.
+
+----------------------------------------------------------------
+INPUTS
+----------------------------------------------------------------
+
+ASSET_TYPE:
+{{asset_type_rules[asset_type]}}
+
+ICP_ROLE:
+{{icp}}
+
+PRIMARY_TOPIC:
+{{primary_topic}}
+
+use the following tone: {{tone_rules[tone]}}
+
+----------------------------------------------------------------
+INSIGHTS_JSON (FROM RAG — MANDATORY)
+----------------------------------------------------------------
+{{vector_search_context}}
+
+You MUST ground all content in this JSON.
+Do NOT introduce concepts not present in it.
+
+----------------------------------------------------------------
+ASSET TEMPLATES
+----------------------------------------------------------------
+
+IF ASSET_TYPE = EMAIL
+OUTPUT FORMAT (STRICT):
+
+subject:
+1 short, sharp line focused on a real operational problem or curiosity.
+
+opening:
+2 sentences max.
+- sentence 1: context that mirrors their day-to-day reality
+- sentence 2: a specific operational pain surfaced in the insights
+
+body:
+3 natural bullets (no labels).
+- bullet 1: describe the pain in practitioner language
+- bullet 2: explain why it keeps happening operationally
+- bullet 3: how the situation changes when visibility or impact clarity exists
+
+cta:
+1 short, friendly sentence offering a quick chat or resource.
+
+------------------------------------------------------------
+
+IF ASSET_TYPE = BLOG_POST
+OUTPUT FORMAT (STRICT):
+
+intro:
+Maximum 2 sentences framing a real operational failure or misconception.
+
+section 1:
+One-line subhead.
+2-3 sentences describing the operational problem.
+
+section 2:
+One-line subhead.
+2-3 sentences explaining why teams get stuck or repeat the mistake.
+
+section 3:
+One-line subhead.
+2-3 sentences describing what changes when assumptions are validated.
+
+conclusion:
+1 sentence tying the issue back to operational clarity.
+
+------------------------------------------------------------
+
+IF ASSET_TYPE = LINKEDIN_POST
+OUTPUT FORMAT (STRICT):
+
+1 short hook sentence (provocative but technical).
+1-2 sentences describing the operational reality.
+1 sentence highlighting the hidden risk or blind spot.
+1 sentence pointing to what teams should question or re-examine.
+
+------------------------------------------------------------
+
+IF ASSET_TYPE = ONE_PAGER
+OUTPUT FORMAT (STRICT):
+
+headline:
+1 line describing the operational problem.
+
+problem:
+2-3 sentences grounded in the insights.
+
+why_it_persists:
+2-3 sentences explaining systemic causes.
+
+operational_shift:
+2-3 sentences describing what changes with visibility and impact awareness.
+
+----------------------------------------------------------------
+FINAL INSTRUCTIONS
+----------------------------------------------------------------
+
+- Write ONLY the final asset.
+- No commentary.
+- No explanations.
+- No references to “insights”, “this discussion”, or “the data”.
+- Every sentence must be defensible from the provided JSON.
+"""
+
+
+
+
+
+DEFAULT_TEMPLATE_1 = """
 ------------------------------------------------------
 CONTENT GUARDRAILS (MANDATORY)
 ------------------------------------------------------
@@ -208,7 +392,7 @@ INPUTS:
 User text: any concept, question, or statement
 Backgrounds: high-level domain context (e.g., network security, IAM, cloud, DevOps, IT operations)
 
-STEP 1 – Understand the input:
+STEP 1 - Understand the input:
 Decide the nature of the input: technical issue, abstract concept, process/policy problem, human/organizational pain.
 If the input is abstract (label, framework, role, or principle), discard the abstract label and identify the concrete struggles it may cause.
 If the input is concrete, focus on the real operational consequences of the stated problem.
@@ -345,8 +529,15 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
     """Format retrieved documents into source items."""
     sources = []
     for doc in docs:
-        metadata = doc.metadata if hasattr(doc, 'metadata') else {}
-        content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
+        # Handle external_docs dictionaries (source objects we created)
+        if isinstance(doc, dict):
+            # For our source objects, use the dict as metadata and extract content
+            metadata = doc.copy()
+            content = doc.get("snippet", doc.get("citation", doc.get("title", "No content")))
+        else:
+            # Handle LangChain Document objects
+            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+            content = doc.page_content if hasattr(doc, 'page_content') else str(doc)
         
         # Get score from metadata (where vectorstore puts it)
         score = metadata.get("score", 0.0)
@@ -438,6 +629,16 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             "start_sec": _safe_float(metadata.get("start_sec")),
             "end_sec": _safe_float(metadata.get("end_sec")),
             "level": _safe_int(metadata.get("level")),
+
+            # Generic URL field (uses the most appropriate URL for each doc type)
+            "url": _safe_str(metadata.get("url") or metadata.get("thread_url") or metadata.get("video_url") or metadata.get("episode_url")),
+
+            # RAG-specific metadata fields
+            "key_issues": metadata.get("key_issues", []),
+            "pain_phrases": metadata.get("pain_phrases", []),
+            "emotional_triggers": metadata.get("emotional_triggers", []),
+            "buyer_language": metadata.get("buyer_language", []),
+            "implicit_risks": metadata.get("implicit_risks", []),
         }
         
         sources.append(source)
@@ -467,6 +668,11 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str) -> Lis
         merged_docs.append(doc)
 
     logger.info("After merge/filter by '%s': %d → %d", merger_by, len(docs), len(merged_docs))
+    #sort the merged_docs by the score in descending order
+    merged_docs = sorted(merged_docs, key=lambda x: x.metadata.get('score', 0), reverse=True)
+    # leave the top 10 documents with the highest score
+    merged_docs = merged_docs[:10]
+
     return merged_docs
 
 
@@ -536,12 +742,12 @@ async def process_rag(
     asset_type: str | None = None,
     icp: str | None = None,
     template: str | None = None,
-) -> tuple[str, List[Dict[str, Any]]]:
+) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
     """
-    Process RAG pipeline and return refined text and sources.
-    
+    Process RAG pipeline and return refined text, sources, retrieved documents, and final prompt.
+
     Returns:
-        tuple: (refined_text, sources_list)
+        tuple: (refined_text, sources_list, retrieved_docs_list, final_prompt)
     """
     logger.info(f"=== Starting RAG Pipeline ===")
     logger.info(f"User ID: {user_id}")
@@ -606,54 +812,88 @@ async def process_rag(
         reddit_docs = []
         youtube_docs = []
         podcast_docs = []
-        retrieval_query_chunks = chunking_model(retrieval_query)
+        retrieval_query_chunks = chunking_model_nltk(retrieval_query)
 
         for chunk in retrieval_query_chunks:
             logger.info(f"Searching for chunk: {chunk} in reddit posts")
             reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10))
 
-        # merge and filter duplicate documents with the same url
-        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "url")
-        # merge the following keys into text with line breaks "title", "summary", "detailed_description", "selftext", "key_issues", "pain_phrases", "emotional_triggers", "buyer_language", "implicit_risks"
-        reddit_filtered_docs_text = "\n\n".join([f"{doc.metadata.get('title', '')}\n{doc.metadata.get('summary', '')}\n{doc.metadata.get('citation', '')}\n{doc.metadata.get('key_issues', '')}\n{",".join(doc.metadata.get('pain_phrases', ''))}\n{",".join(doc.metadata.get('emotional_triggers', ''))}\n{",".join(doc.metadata.get('buyer_language', ''))}\n{",".join(doc.metadata.get('implicit_risks', ''))}" for doc in reddit_filtered_docs])
 
-        external_docs.append({"type": "reddit", "text": reddit_filtered_docs_text})
-
-        for chunk in retrieval_query_chunks:
-            logger.info(f"Searching for chunk: {chunk} in youtube summaries")
-            youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3))
+        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "url")    #extract a vector of json from the reddit_docs
         
-        youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "title")
-        youtube_filtered_docs_text = "\n\n".join([f"{doc.metadata.get('title', '')}\n{doc.metadata.get('description', '')}\n{doc.metadata.get('citation', '')}" for doc in youtube_filtered_docs])
-        #logger.info(f"Youtube filtered docs text: {youtube_filtered_docs_text}")
-        external_docs.append({"type": "youtube", "text": youtube_filtered_docs_text})
+        logger.info(f"############################# Reddit filtered docs: {len(reddit_filtered_docs)} #############################")
+        for doc in reddit_filtered_docs:
+            title = doc.metadata.get('title', '')
+            score = doc.metadata.get('score', 0)
+            citation = doc.metadata.get('citation', '')
+            key_issues = doc.metadata.get('key_issues', '')
+            pain_phrases = doc.metadata.get('pain_phrases', '')
+            emotional_triggers = doc.metadata.get('emotional_triggers', '')
+            buyer_language = doc.metadata.get('buyer_language', '')
+            implicit_risks = doc.metadata.get('implicit_risks', '')
+            # Create comprehensive context excerpt from RAG metadata
+            context_parts = []
+            if key_issues and (isinstance(key_issues, list) and key_issues or str(key_issues).strip()):
+                context_parts.append(f"Key Issues: {', '.join(key_issues) if isinstance(key_issues, list) else str(key_issues)}")
+            if pain_phrases and (isinstance(pain_phrases, list) and pain_phrases or str(pain_phrases).strip()):
+                context_parts.append(f"Pain Phrases: {', '.join(pain_phrases) if isinstance(pain_phrases, list) else str(pain_phrases)}")
+            if emotional_triggers and (isinstance(emotional_triggers, list) and emotional_triggers or str(emotional_triggers).strip()):
+                context_parts.append(f"Emotional Triggers: {', '.join(emotional_triggers) if isinstance(emotional_triggers, list) else str(emotional_triggers)}")
+            if buyer_language and (isinstance(buyer_language, list) and buyer_language or str(buyer_language).strip()):
+                context_parts.append(f"Buyer Language: {', '.join(buyer_language) if isinstance(buyer_language, list) else str(buyer_language)}")
+            if implicit_risks and (isinstance(implicit_risks, list) and implicit_risks or str(implicit_risks).strip()):
+                context_parts.append(f"Implicit Risks: {', '.join(implicit_risks) if isinstance(implicit_risks, list) else str(implicit_risks)}")
 
-        for chunk in retrieval_query_chunks:
-            logger.info(f"Searching for chunk: {chunk} in podcast summaries")
-            podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3))
-        podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "title")
-        podcast_filtered_docs_text = "\n\n".join([f"{doc.metadata.get('title', '')}\n{doc.metadata.get('description', '')}\n{doc.metadata.get('citation', '')}" for doc in podcast_filtered_docs])
-        #logger.info(f"Podcast filtered docs text: {podcast_filtered_docs_text}")
-        external_docs.append({"type": "podcast", "text": podcast_filtered_docs_text})
+            context_excerpt = " | ".join(context_parts) if context_parts else (citation[:500] if citation else "No context available")
 
+            # Create individual source objects for each retrieved document
+            source_obj = {
+                "filename": title or "Reddit Post",
+                "snippet": context_excerpt,
+                "score": score,
+                "source": "reddit",
+                "doc_type": "reddit_post",
+                "citation": citation,
+                "title": title,
+                "url": doc.metadata.get('url', ''),
+                "key_issues": key_issues,
+                "pain_phrases": pain_phrases,
+                "emotional_triggers": emotional_triggers,
+                "buyer_language": buyer_language,
+                "implicit_risks": implicit_risks
+            }
+            external_docs.append(source_obj)  
+            #logger.info(f"Reddit filtered docs JSON: {reddit_filtered_docs_json_text}")
+        logger.info("#################################################################################")  
+    
     except Exception as e:
         logger.warning(f"⚠ Error retrieving external reference documents: {type(e).__name__}: {str(e)}")
         external_docs = []
     # For RAG context, we now use the external documents (no persisted user documents).
-    retrieved_docs = external_docs
-    #logger.info(f"✓ Total context sources: {len(retrieved_docs)} external documents")
-    
-    # Format context from retrieved documents
-    #logger.info("Formatting context from retrieved documents...")
+    retrieved_docs = reddit_filtered_docs
     context_parts: list[str] = []
     seen_snippets: set[str] = set()
     for i, doc in enumerate(retrieved_docs, 1):
         metadata = doc.metadata if hasattr(doc, 'metadata') else {}
 
-        snippet = doc.get("text", "")[:5000]
-        context_parts.append(f"{snippet}")
-   
-    vector_search_context = ( "\n".join(context_parts) if context_parts else "No relevant documents found."   )
+    # join all documents metadata to a json array for the vector_search_context
+    vector_search_context = []
+    for doc in retrieved_docs:
+        if hasattr(doc, 'metadata') and doc.metadata:
+            doc_context = {
+                "title": doc.metadata.get('title', ''),
+                "citation": doc.metadata.get('citation', ''),
+                "key_issues": doc.metadata.get('key_issues', ''),
+                "pain_phrases": doc.metadata.get('pain_phrases', ''),
+                "emotional_triggers": doc.metadata.get('emotional_triggers', ''),
+                "buyer_language": doc.metadata.get('buyer_language', ''),
+                "implicit_risks": doc.metadata.get('implicit_risks', ''),
+                "score": doc.metadata.get('score', 0)
+            }
+            vector_search_context.append(doc_context)
+    vector_search_context_text = json.dumps(vector_search_context, indent=4)
+    vector_search_context = vector_search_context_text
+
     logger.info(
         f"✓ Vector search context built: {len(vector_search_context)} chars from {len(context_parts)} sources"
     )
@@ -708,7 +948,7 @@ async def process_rag(
     # Generate response
     logger.info("Sending request to OpenAI API...")
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
+        #SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=prompt)
     ]
     
@@ -741,5 +981,15 @@ async def process_rag(
         f"(0 user documents, {len(external_docs)} external references)"
     )
     
+    # Format retrieved documents for frontend
+    retrieved_docs_formatted = []
+    for doc in retrieved_docs:
+        if hasattr(doc, 'metadata') and hasattr(doc, 'page_content'):
+            doc_dict = {
+                "page_content": doc.page_content,
+                "metadata": doc.metadata
+            }
+            retrieved_docs_formatted.append(doc_dict)
+
     logger.info("=== RAG Pipeline Completed Successfully ===")
-    return refined_text, sources
+    return refined_text, sources, retrieved_docs_formatted, prompt

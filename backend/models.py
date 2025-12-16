@@ -37,6 +37,8 @@ class Job(Base):
     status = Column(String, default="completed")
     refined_text = Column(Text, nullable=False)
     sources = Column(JSON, nullable=False)
+    retrieved_docs = Column(JSON, nullable=True)  # Store the retrieved documents for frontend
+    final_prompt = Column(Text, nullable=True)  # Store the final prompt used by LLM
     original_request = Column(Text, nullable=True)  # Store the original marketing text
     topics = Column(JSON, nullable=True)  # Store the selected topics/backgrounds
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -149,5 +151,7 @@ class RAGResultResponse(BaseModel):
     job_id: str
     refined_text: str
     sources: List[SourceItem]
+    retrieved_docs: List[Dict[str, Any]] = []
+    final_prompt: Optional[str] = None
     original_request: Optional[str] = None
     topics: Optional[List[str]] = None

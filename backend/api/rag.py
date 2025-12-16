@@ -194,7 +194,7 @@ async def process_marketing_material(
     # Process RAG
     try:
         logger.info("Calling RAG pipeline...")
-        refined_text, sources = await process_rag(
+        refined_text, sources, retrieved_docs, final_prompt = await process_rag(
             user_id=current_user.id,
             backgrounds=request.backgrounds,
             marketing_text=request.marketing_text,
@@ -203,7 +203,7 @@ async def process_marketing_material(
             icp=request.icp,
             template=template,
         )
-        logger.info(f"✓ RAG pipeline completed - Output: {len(refined_text)} chars, Sources: {len(sources)}")
+        logger.info(f"✓ RAG pipeline completed - Output: {len(refined_text)} chars, Sources: {len(sources)}, Retrieved Docs: {len(retrieved_docs)}")
     except Exception as e:
         logger.error(f"✗ RAG pipeline failed: {type(e).__name__}: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -223,6 +223,8 @@ async def process_marketing_material(
             status="completed",
             refined_text=refined_text,
             sources=[s.model_dump() if hasattr(s, 'model_dump') else s for s in sources],
+            retrieved_docs=retrieved_docs,
+            final_prompt=final_prompt,
             original_request=request.marketing_text,
             topics=request.backgrounds
         )
@@ -292,6 +294,8 @@ async def get_results(
         job_id=job.job_id,
         refined_text=job.refined_text,
         sources=sources,
+        retrieved_docs=job.retrieved_docs or [],
+        final_prompt=job.final_prompt,
         original_request=job.original_request,
         topics=job.topics
     )
