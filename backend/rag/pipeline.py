@@ -27,44 +27,59 @@ logging.basicConfig(
 
 asset_type_rules = {
 "email": """
-subject: 1 short, sharp line focused on a real problem or curiosity
+subject:
+1 short, sharp line focused on a real operational problem or curiosity.
 
-opening: 2 sentences max.
-- sentence 1: context that shows relevance to their world
-- sentence 2: the specific pain you're seeing teams struggle with
+opening:
+2 sentences max.
+- sentence 1: context that mirrors their day-to-day reality
+- sentence 2: a specific operational pain surfaced in the insights
 
-body: 3 bullets (but written as natural bullets, not labeled)
-- bullet 1: describe the pain in practitioner language (no “pain:”)
-- bullet 2: explain the underlying reason it keeps happening (without calling it "insight")
-- bullet 3: how the solution changes their day-to-day (practical, not salesy)
+body:
+3 natural bullets (no labels).
+- bullet 1: describe the pain in practitioner language
+- bullet 2: explain why it keeps happening operationally
+- bullet 3: how the situation changes when visibility or impact clarity exists
 
-cta: 1 short, friendly sentence offering a quick chat or resource
+cta:
+1 short, friendly sentence offering a quick chat or resource.
 """,
 "one-pager": """
-headline: 1 line: problem-oriented or value-oriented
-subhead: 1 line: clarifies who it's for or why it matters
+headline:
+1 line describing the operational problem.
 
-lead paragraph: up to 2 sentences grounding the real-world context
-problems: 6 bullets written in practitioner voice, no labels, no abstract phrasing
-features: 4 bullets, each starting with "Feature:", each mapped implicitly to a problem (no need to indicate the problem explicitly)
-business impact: 3 bullets that describe outcomes in natural language (no numbers required)
+problem:
+2–3 sentences grounded in the insights.
 
-cta: 1 line
+why_it_persists:
+2–3 sentences explaining systemic causes.
+
+operational_shift:
+2–3 sentences describing what changes with visibility and impact awareness.
 """,
 "landing page": """
 headline: 1 line, sharp, focused on the core value
 subhead: 1 line, clarifying what pain it solves or what outcome it unlocks
 """,
     # Support both "blog" (UI) and "blog post" (notebook wording)
-    "blog": """
-intro paragraph: 1-2 sentences grounding the problem in a real-world scenario
+"blog": """
+intro:
+Maximum 2 sentences framing a real operational failure or misconception.
 
-sections: 3 sections
-each section:
-- 1 line subhead
-- 1 paragraph (4-6 lines) with practical insights, not generic commentary
+section 1:
+One-line subhead.
+2-3 sentences describing the operational problem.
 
-conclusion: 1 line that ties together the point or gives a forward-looking takeaway
+section 2:
+One-line subhead.
+2-3 sentences explaining why teams get stuck or repeat the mistake.
+
+section 3:
+One-line subhead.
+2-3 sentences describing what changes when assumptions are validated.
+
+conclusion:
+1 sentence tying the issue back to operational clarity.
 """,
     "blog post": """
 - Length: Short-form thought leadership (400-600 words max)
@@ -88,6 +103,11 @@ STRUCTURE:
    - Reframe the problem in a sharper, more actionable way.
    - Do NOT pitch a product.
 
+""","linkedin post": """
+1 short hook sentence (provocative but technical).
+1–2 sentences describing the operational reality.
+1 sentence highlighting the hidden risk or blind spot.
+1 sentence pointing to what teams should question or re-examine.
 """,
 }
 
