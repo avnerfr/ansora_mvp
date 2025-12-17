@@ -19,7 +19,7 @@ You expose operational failure, friction, blind spots, and decision fatigue.
 
 
 
-DEFAULT_TEMPLATE = f"""
+DEFAULT_TEMPLATE = """
 
 ZERO TRUST CONTEXT
 Zero Trust in this task is NOT a framework or maturity model.

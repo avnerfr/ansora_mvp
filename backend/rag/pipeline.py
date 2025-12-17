@@ -655,6 +655,19 @@ def build_final_prompt(
     prompt = prompt.replace('{{asset_type_instructions}}', asset_type_instructions)
     prompt = prompt.replace('{{asset_type_rules[asset_type]}}', asset_type_instructions)
     prompt = prompt.replace('{{icp}}', icp or '')
+
+    # Check for any remaining template variables
+    import re
+    remaining_vars = re.findall(r'\{\{.*?\}\}', prompt)
+    if remaining_vars:
+        logger.warning(f"⚠ Found unreplaced template variables: {remaining_vars}")
+        # Log the prompt with markers around remaining variables for debugging
+        for var in remaining_vars:
+            prompt = prompt.replace(var, f"***UNREPLACED:{var}***")
+        logger.warning(f"Prompt with unreplaced variables marked:\n{prompt}")
+    else:
+        logger.info("✓ All template variables successfully replaced")
+
     logger.info(f"✓ Prompt built: {len(prompt)} chars")
     logger.debug(f"Full prompt:\n{prompt}")
 
@@ -733,7 +746,8 @@ async def process_rag(
         logger.info("Using default template")
     else:
         logger.info("Using custom/override template")
-
+    template = DEFAULT_TEMPLATE
+    
     # Step 1: Build optimized retrieval query
     retrieval_query = await build_retrieval_query(marketing_text, backgrounds)
     backgrounds_str = ", ".join(backgrounds)
