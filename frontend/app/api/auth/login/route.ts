@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { generators } from 'openid-client'
 import { getCognitoOidcClient } from '@/lib/cognito-oidc.server'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const client = await getCognitoOidcClient()
