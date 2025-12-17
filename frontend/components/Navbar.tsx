@@ -2,15 +2,14 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { removeAuthToken } from '@/lib/auth'
+import { logout } from '@/lib/auth'
 import { Button } from './Button'
 
 export const Navbar: React.FC = () => {
   const router = useRouter()
 
   const handleLogout = () => {
-    removeAuthToken()
-    router.push('/auth/login')
+    logout()
   }
 
   return (
