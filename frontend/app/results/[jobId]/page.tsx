@@ -416,9 +416,9 @@ export default function ResultsPage() {
                         {/* URL Links */}
                         <div className="mt-3 flex flex-wrap gap-3">
                           {/* Reddit Thread URL */}
-                          {source.thread_url && (
+                          {source.url && (
                             <a
-                              href={source.thread_url}
+                              href={source.url}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
