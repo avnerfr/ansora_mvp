@@ -8,7 +8,7 @@ import { FileDropzone } from '@/components/FileDropzone'
 import { TextArea } from '@/components/TextArea'
 import { Button } from '@/components/Button'
 import { ragAPI } from '@/lib/api'
-import { isAuthenticated } from '@/lib/auth'
+import { isAuthenticated, getAuthToken } from '@/lib/auth'
 
 const USE_CASE_OPTIONS = [
   'cybersecurity',
@@ -30,16 +30,24 @@ export default function HomePage() {
   const [icp, setIcp] = useState<string>('')
   const [isUploadingContextDocs, setIsUploadingContextDocs] = useState(false)
 
-  // Check authentication only after component mounts
+  // Check authentication immediately
   useEffect(() => {
-    const token = isAuthenticated()
-    console.log('Auth check:', token)
-    setHasToken(token)
-    setAuthChecked(true)
-    
-    if (!token) {
-      router.push('/auth/login')
+    const checkAuth = () => {
+      const token = isAuthenticated()
+      console.log('Home page auth check:', { token: !!token, tokenValue: getAuthToken()?.substring(0, 20) + '...' })
+      setHasToken(!!token)
+      setAuthChecked(true)
+
+      if (!token) {
+        console.log('No valid token found, redirecting to login...')
+        router.replace('/auth/login')
+        return
+      }
+
+      console.log('User is authenticated, showing home page')
     }
+
+    checkAuth()
   }, [router])
 
   const handleContextFilesSelected = async (files: File[]) => {
@@ -128,13 +136,17 @@ export default function HomePage() {
     }
   }
 
-  if (!authChecked || !hasToken) {
+  // Show loading while checking authentication
+  if (!authChecked) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
       </div>
     )
   }
+
+  // If authentication check is done but user is not authenticated, the useEffect will redirect
+  // This component won't render for unauthenticated users due to the redirect
 
   return (
     <div className="min-h-screen bg-gray-50">

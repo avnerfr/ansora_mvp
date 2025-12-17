@@ -1,11 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useForm } from 'react-hook-form'
+import { setAuthToken, isAuthenticated } from '@/lib/auth'
 import { authAPI } from '@/lib/api'
-import { setAuthToken } from '@/lib/auth'
 import { Button } from '@/components/Button'
 
 interface LoginForm {
@@ -22,6 +22,16 @@ export default function LoginPage() {
     handleSubmit,
     formState: { errors },
   } = useForm<LoginForm>()
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    const authenticated = isAuthenticated()
+    console.log('Login page auth check:', authenticated)
+    if (authenticated) {
+      console.log('User already authenticated, redirecting to home...')
+      router.replace('/')
+    }
+  }, [router])
 
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true)
@@ -49,13 +59,7 @@ export default function LoginPage() {
             Sign in to your account
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Or{' '}
-            <Link
-              href="/auth/register"
-              className="font-medium text-primary-600 hover:text-primary-500"
-            >
-              create a new account
-            </Link>
+            Sign in with your credentials
           </p>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit(onSubmit)}>
@@ -116,16 +120,6 @@ export default function LoginPage() {
                   {errors.password.message}
                 </p>
               )}
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="text-sm">
-              <Link
-                href="/auth/forgot-password"
-                className="font-medium text-primary-600 hover:text-primary-500"
-              >
-                Forgot password?
-              </Link>
             </div>
           </div>
           <div>
