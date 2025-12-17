@@ -1,135 +1,50 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import { useForm } from 'react-hook-form'
-import { setAuthToken, isAuthenticated } from '@/lib/auth'
-import { authAPI } from '@/lib/api'
-import { Button } from '@/components/Button'
-
-interface LoginForm {
-  email: string
-  password: string
-}
+import { useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
 
 export default function LoginPage() {
-  const router = useRouter()
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<LoginForm>()
+  const searchParams = useSearchParams()
+  const error = searchParams.get('error')
 
-  // Redirect if already authenticated
   useEffect(() => {
-    const authenticated = isAuthenticated()
-    console.log('Login page auth check:', authenticated)
-    if (authenticated) {
-      console.log('User already authenticated, redirecting to home...')
-      router.replace('/')
+    // Redirect to Cognito login
+    if (!error) {
+      window.location.href = '/api/auth/login'
     }
-  }, [router])
+  }, [error])
 
-  const onSubmit = async (data: LoginForm) => {
-    setIsLoading(true)
-    setError(null)
-
-    try {
-      const response = await authAPI.login(data.email, data.password)
-      setAuthToken(response.access_token)
-      // Force a hard navigation to ensure state is fresh
-      window.location.href = '/'
-    } catch (err: any) {
-      setError(
-        err.response?.data?.detail || 'Login failed. Please try again.'
-      )
-    } finally {
-      setIsLoading(false)
-    }
+  // Show error if callback failed
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-md w-full space-y-8">
+          <div>
+            <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
+              Sign in to your account
+            </h2>
+          </div>
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            Authentication failed. Please try again.
+          </div>
+          <button
+            onClick={() => window.location.href = '/api/auth/login'}
+            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    )
   }
 
+  // Show loading while redirecting to Cognito
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Sign in to your account
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Sign in with your credentials
-          </p>
-        </div>
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit(onSubmit)}>
-          {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
-              {error}
-            </div>
-          )}
-          <div className="space-y-4">
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Email address
-              </label>
-              <input
-                id="email"
-                {...register('email', {
-                  required: 'Email is required',
-                  pattern: {
-                    value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                    message: 'Invalid email address',
-                  },
-                })}
-                type="email"
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                placeholder="you@example.com"
-              />
-              {errors.email && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.email.message}
-                </p>
-              )}
-            </div>
-            <div>
-              <label
-                htmlFor="password"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Password
-              </label>
-              <input
-                id="password"
-                {...register('password', {
-                  required: 'Password is required',
-                  minLength: {
-                    value: 6,
-                    message: 'Password must be at least 6 characters',
-                  },
-                })}
-                type="password"
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                placeholder="••••••••"
-              />
-              {errors.password && (
-                <p className="mt-1 text-sm text-red-600">
-                  {errors.password.message}
-                </p>
-              )}
-            </div>
-          </div>
-          <div>
-            <Button type="submit" variant="primary" isLoading={isLoading} className="w-full">
-              Sign in
-            </Button>
-          </div>
-        </form>
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
+        <p className="mt-4 text-gray-600">Redirecting to login...</p>
       </div>
     </div>
   )
 }
-
