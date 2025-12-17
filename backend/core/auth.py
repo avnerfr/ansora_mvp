@@ -1,15 +1,39 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from jose import JWTError, jwt
+from jose import JWTError, jwt, jwk
+from jose.utils import base64url_decode
 import bcrypt
+import httpx
+import json
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from core.config import settings
 from db import get_db
 from models import User
+import logging
 
+logger = logging.getLogger(__name__)
 security = HTTPBearer()
+
+# Cognito configuration
+COGNITO_REGION = "us-east-1"
+COGNITO_USER_POOL_ID = "us-east-1_vpBoYyEss"
+COGNITO_ISSUER = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}"
+COGNITO_JWKS_URL = f"{COGNITO_ISSUER}/.well-known/jwks.json"
+
+# Cache for JWKS keys
+_jwks_cache = None
+
+
+async def get_cognito_jwks():
+    """Fetch and cache Cognito JWKS keys."""
+    global _jwks_cache
+    if _jwks_cache is None:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(COGNITO_JWKS_URL)
+            _jwks_cache = response.json()
+    return _jwks_cache
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -19,7 +43,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """Hash a password."""
-    # BCrypt has a 72-byte limit, truncate safely
     password_bytes = password.encode('utf-8')
     if len(password_bytes) > 72:
         password_bytes = password_bytes[:72]
@@ -43,7 +66,7 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ) -> User:
-    """Get the current authenticated user from JWT token."""
+    """Get the current authenticated user from Cognito JWT token."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -52,16 +75,74 @@ async def get_current_user(
     
     try:
         token = credentials.credentials
-        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
-        user_id_str: str = payload.get("sub")
-        if user_id_str is None:
+        
+        # Get the key id from the token header
+        headers = jwt.get_unverified_header(token)
+        kid = headers.get("kid")
+        
+        if not kid:
+            logger.error("No kid in token header")
             raise credentials_exception
-        user_id = int(user_id_str)
-    except (JWTError, ValueError, TypeError):
+        
+        # Get JWKS and find the matching key
+        jwks = await get_cognito_jwks()
+        key = None
+        for k in jwks.get("keys", []):
+            if k["kid"] == kid:
+                key = k
+                break
+        
+        if not key:
+            logger.error(f"Key {kid} not found in JWKS")
+            raise credentials_exception
+        
+        # Verify and decode the token
+        payload = jwt.decode(
+            token,
+            key,
+            algorithms=["RS256"],
+            audience=None,  # Cognito access tokens don't have aud claim
+            issuer=COGNITO_ISSUER,
+            options={"verify_aud": False}
+        )
+        
+        # Get user email from token
+        email = payload.get("email") or payload.get("username")
+        cognito_sub = payload.get("sub")
+        
+        if not email and not cognito_sub:
+            logger.error("No email or sub in token")
+            raise credentials_exception
+        
+        logger.info(f"Cognito user authenticated: {email or cognito_sub}")
+        
+        # Find or create user in database
+        user = None
+        if email:
+            user = db.query(User).filter(User.email == email).first()
+        
+        if not user and cognito_sub:
+            # Try to find by cognito_sub if we store it, or create new user
+            user = db.query(User).filter(User.email == email).first() if email else None
+        
+        if not user:
+            # Auto-create user from Cognito
+            logger.info(f"Creating new user from Cognito: {email}")
+            user = User(
+                email=email or f"{cognito_sub}@cognito.user",
+                hashed_password="cognito_managed",  # Not used for Cognito users
+                is_subscribed=False,
+                is_active=True
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        
+        return user
+        
+    except JWTError as e:
+        logger.error(f"JWT validation error: {e}")
         raise credentials_exception
-    
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None:
+    except Exception as e:
+        logger.error(f"Auth error: {e}")
         raise credentials_exception
-    return user
-

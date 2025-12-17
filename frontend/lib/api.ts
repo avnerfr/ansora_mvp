@@ -13,7 +13,9 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use(
   (config) => {
     if (typeof window !== 'undefined') {
-      const token = localStorage.getItem('auth_token')
+      // Get Cognito access token from cookie
+      const match = document.cookie.match(/(?:^|; )cognito_access_token=([^;]*)/)
+      const token = match ? decodeURIComponent(match[1]) : null
       if (token) {
         config.headers.Authorization = `Bearer ${token}`
       }
@@ -32,8 +34,7 @@ apiClient.interceptors.response.use(
     const status = error.response?.status
     const url = error.config?.url as string | undefined
 
-    // For 401s on non-auth endpoints, clear token and redirect to login.
-    // This avoids redirect loops when the user simply mistypes their password on /auth/login.
+    // For 401s on non-auth endpoints, redirect to login
     if (
       status === 401 &&
       url &&
@@ -41,8 +42,7 @@ apiClient.interceptors.response.use(
       !url.includes('/auth/register')
     ) {
       if (typeof window !== 'undefined') {
-        localStorage.removeItem('auth_token')
-        window.location.href = '/auth/login'
+        window.location.href = '/api/auth/logout'
       }
     }
     return Promise.reject(error)
