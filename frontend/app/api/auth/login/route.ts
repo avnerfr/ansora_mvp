@@ -20,17 +20,18 @@ export async function GET() {
     const response = NextResponse.redirect(authUrl)
     
     // Store nonce and state in HTTP-only cookies for callback verification
+    // Use sameSite: 'none' with secure: true for cross-site redirect compatibility
     response.cookies.set('oidc_nonce', nonce, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: true,
+      sameSite: 'none',
       maxAge: 60 * 10, // 10 minutes
       path: '/',
     })
     response.cookies.set('oidc_state', state, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      secure: true,
+      sameSite: 'none',
       maxAge: 60 * 10, // 10 minutes
       path: '/',
     })
