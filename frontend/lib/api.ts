@@ -122,5 +122,57 @@ export const ragAPI = {
   },
 }
 
+// Maintenance API (Admin only)
+export const maintenanceAPI = {
+  getCollections: async () => {
+    const response = await apiClient.get('/maintenance/collections')
+    return response.data
+  },
+  createCollection: async (collectionName: string, vectorSize: number, distance: string) => {
+    const formData = new FormData()
+    formData.append('collection_name', collectionName)
+    formData.append('vector_size', vectorSize.toString())
+    formData.append('distance', distance)
+    const response = await apiClient.post('/maintenance/collections', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  },
+  deleteCollection: async (collectionName: string) => {
+    const response = await apiClient.delete(`/maintenance/collections/${collectionName}`)
+    return response.data
+  },
+  getCollectionStats: async (collection: string) => {
+    const response = await apiClient.get(`/maintenance/collection-stats/${collection}`)
+    return response.data
+  },
+  getRecords: async (collection: string, limit: number = 10, docType?: string) => {
+    const response = await apiClient.get(`/maintenance/records/${collection}`, {
+      params: { limit, doc_type: docType }
+    })
+    return response.data
+  },
+  upsertData: async (dataType: 'reddit' | 'podcast' | 'youtube', files: File[], collection?: string, podcastFormat?: string) => {
+    const formData = new FormData()
+    files.forEach((file) => {
+      formData.append('files', file)
+    })
+    if (collection) {
+      formData.append('collection', collection)
+    }
+    if (podcastFormat) {
+      formData.append('podcast_format', podcastFormat)
+    }
+    const response = await apiClient.post(`/maintenance/upsert/${dataType}`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  },
+}
+
 export default apiClient
 

@@ -459,6 +459,51 @@ class VectorStore:
             logger.error(f"✗ Error clearing collection for user {user_id}: {type(e).__name__}: {str(e)}")
             return False
 
+    def upsert_document(self, collection_name: str, text: str, metadata: dict) -> bool:
+        """Upsert a single document into a collection."""
+        try:
+            from qdrant_client.models import PointStruct, VectorParams, Distance
+            
+            # Ensure collection exists
+            collections = self.client.get_collections().collections
+            collection_names = [c.name for c in collections]
+            
+            if collection_name not in collection_names:
+                logger.info(f"Creating collection: {collection_name}")
+                self.client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(size=self._vector_size, distance=Distance.COSINE)
+                )
+            
+            # Generate embedding
+            if self.embeddings is None:
+                logger.error("Embeddings not initialized")
+                return False
+            
+            embedding = self.embeddings.embed_query(text)
+            
+            # Generate unique ID
+            point_id = str(uuid.uuid4())
+            
+            # Upsert point
+            self.client.upsert(
+                collection_name=collection_name,
+                points=[
+                    PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload=metadata
+                    )
+                ]
+            )
+            
+            logger.info(f"✓ Upserted document to {collection_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"✗ Error upserting document: {type(e).__name__}: {str(e)}")
+            return False
+
 
 vector_store = VectorStore()
 

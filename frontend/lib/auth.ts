@@ -25,3 +25,17 @@ export const getCurrentUser = (): any => {
   }
 }
 
+export const isAdmin = (): boolean => {
+  const token = getAuthToken()
+  if (!token) return false
+  
+  try {
+    // Decode JWT payload (access token contains cognito:groups)
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    const groups = payload['cognito:groups'] || []
+    return groups.includes('Administrators')
+  } catch {
+    return false
+  }
+}
+
