@@ -1,4 +1,10 @@
 from importlib import import_module
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+load_dotenv()
+
 from core.config import settings  # adjust import if your path is different
 
 try:

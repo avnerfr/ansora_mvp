@@ -5,6 +5,7 @@ from jose.utils import base64url_decode
 import bcrypt
 import httpx
 import json
+import base64
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -16,10 +17,8 @@ import logging
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
-# Cognito configuration
-COGNITO_REGION = "us-east-1"
-COGNITO_USER_POOL_ID = "us-east-1_vpBoYyEss"
-COGNITO_ISSUER = f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}"
+# Cognito configuration - using settings from config
+COGNITO_ISSUER = f"https://cognito-idp.{settings.COGNITO_REGION}.amazonaws.com/{settings.COGNITO_USER_POOL_ID}"
 COGNITO_JWKS_URL = f"{COGNITO_ISSUER}/.well-known/jwks.json"
 
 # Cache for JWKS keys
@@ -30,9 +29,12 @@ async def get_cognito_jwks():
     """Fetch and cache Cognito JWKS keys."""
     global _jwks_cache
     if _jwks_cache is None:
+        logger.info(f"Fetching JWKS from: {COGNITO_JWKS_URL}")
         async with httpx.AsyncClient() as client:
             response = await client.get(COGNITO_JWKS_URL)
+            response.raise_for_status()
             _jwks_cache = response.json()
+            logger.info(f"✓ JWKS fetched successfully. Found {len(_jwks_cache.get('keys', []))} keys")
     return _jwks_cache
 
 
@@ -93,8 +95,37 @@ async def get_current_user(
                 break
         
         if not key:
-            logger.error(f"Key {kid} not found in JWKS")
-            raise credentials_exception
+            logger.error(f"Key {kid} not found in JWKS from {COGNITO_JWKS_URL}")
+            logger.error(f"Available keys in JWKS: {[k.get('kid') for k in jwks.get('keys', [])]}")
+            logger.error(f"Expected issuer: {COGNITO_ISSUER}")
+            logger.error(f"Configured User Pool: {settings.COGNITO_USER_POOL_ID} in region {settings.COGNITO_REGION}")
+            
+            # Try to decode token (unverified) to get issuer info
+            try:
+                # Decode token header
+                header_data = token.split('.')[0]
+                header_data += '=' * (4 - len(header_data) % 4)  # Add padding
+                header = json.loads(base64.urlsafe_b64decode(header_data))
+                logger.error(f"Token header: {header}")
+                
+                # Decode payload (unverified) to get issuer
+                payload_data = token.split('.')[1]
+                payload_data += '=' * (4 - len(payload_data) % 4)  # Add padding
+                payload_unverified = json.loads(base64.urlsafe_b64decode(payload_data))
+                logger.error(f"Token issuer (unverified): {payload_unverified.get('iss')}")
+                logger.error(f"Token sub: {payload_unverified.get('sub')}")
+                logger.error(f"Token exp: {payload_unverified.get('exp')}")
+            except Exception as e:
+                logger.error(f"Could not decode token: {e}")
+            
+            # Clear cache to force refresh on next request
+            global _jwks_cache
+            _jwks_cache = None
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Token verification failed: Key ID mismatch. Token may be from a different User Pool or expired. "
+                       f"Configured: {settings.COGNITO_REGION}/{settings.COGNITO_USER_POOL_ID}"
+            )
         
         # Verify and decode the token
         payload = jwt.decode(

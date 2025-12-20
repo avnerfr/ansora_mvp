@@ -7,14 +7,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import re
 import json
-from langchain_text_splitters import (
-    RecursiveCharacterTextSplitter,
-    CharacterTextSplitter
-)
 
-import nltk
-
-nltk.download('punkt')
 
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
 # Configure logging
@@ -355,63 +348,7 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str, max_do
     return merged_docs
 
 
-"""
-Chunk the text into smaller pieces for retrieval, without external dependencies.
-"""
-def chunking_model_naive(text: str) -> List[str]:
-    """
-    Naive sentence chunker:
-    - Splits on ., !, ? followed by whitespace.
-    - Falls back to a single chunk if anything goes wrong.
-    """
-    try:
-        if not text:
-            return []
-        chunks = re.split(r'(?<=[.!?])\s+', text)
-        return [c.strip() for c in chunks if c.strip()]
-    except Exception as e:
-        print(f"Error chunking text: {e}")
-        return [text]
-
-def chunking_model_nltk(text: str) -> List[str]:
-    """
-    Use nltk to chunk the text into smaller pieces.
-    """
-    try:
-        if not text:
-            return []
-        chunks = nltk.sent_tokenize(text)
-        return [c.strip() for c in chunks if c.strip()]
-    except Exception as e:
-        print(f"Error chunking text: {e}")
-        return [text]
-
-def chunking_model_langchain(text: str,recursive_splitter = False) -> List[str]:
-    """
-    Chunk the text into smaller pieces for retrieval using LangChain.
-    """
-    try:
-        if not text:
-            return []
-        if recursive_splitter:
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=0,
-                length_function=len,
-            )
-        else:
-            text_splitter = CharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=0,
-                length_function=len,
-            )
-        chunks = text_splitter.split_text(text)
-        return [c.strip() for c in chunks if c.strip()]
-    except Exception as e:
-        print(f"Error chunking text: {e}")
-        return [text]   
-
-    
+ 
 
 async def build_retrieval_query(
     marketing_text: str,
@@ -480,7 +417,7 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
         reddit_docs = []
         youtube_docs = []
         podcast_docs = []
-        retrieval_query_chunks = chunking_model_nltk(retrieval_query)
+        retrieval_query_chunks = vector_store.chunking(retrieval_query)
 
         for chunk in retrieval_query_chunks:
             logger.info(f"Searching for chunk: {chunk} in reddit posts, youtube videos, and podcasts")

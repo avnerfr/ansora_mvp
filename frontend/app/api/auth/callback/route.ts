@@ -23,7 +23,13 @@ export async function GET(request: NextRequest) {
     const userInfo = await client.userinfo(tokenSet.access_token!)
     
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ansora-mvp.vercel.app'
-    const response = NextResponse.redirect(new URL('/', baseUrl))
+    
+    // Check for redirect destination in cookie or default to home
+    const redirectTo = request.cookies.get('redirect_after_login')?.value || '/'
+    const response = NextResponse.redirect(new URL(redirectTo, baseUrl))
+    
+    // Clear the redirect cookie
+    response.cookies.delete('redirect_after_login')
     
     // Store tokens in cookies
     if (tokenSet.access_token) {

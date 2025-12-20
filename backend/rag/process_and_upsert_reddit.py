@@ -4,10 +4,14 @@ Process and upsert Reddit posts to vector store.
 import json
 import logging
 from typing import List, Dict, Any
-
+import uuid
+from openai import OpenAI
+import os
+from rag.vectorstore import vector_store
 logger = logging.getLogger(__name__)
+from qdrant_client.models import PointStruct
 
-DEFAULT_PROMPT = f"""
+DETAILS_EXTRACTION_PROMPT = f"""
 
 You are an expert in extracting the most important insights from Reddit posts and replies.
 
@@ -77,7 +81,6 @@ FORMAT REQUIREMENTS:
 conversation_json:
                 {{conversation_json}}
 """
-
 
 
 
@@ -152,15 +155,80 @@ def clean_comments_json(posts_json):
         }
     return clean_post
 
+def clean_and_split_comments(posts_json):
+    if len(posts_json) == 0:
+        return posts_json
 
-def filter_existing_posts(clean_posts):
-    existing_posts = vector_store.search_reddit_posts(
-        collection_name=collection_name,
-        query=query_vector,
-        limit=k,
-        with_payload=True
-    )
-    return [post for post in clean_posts if post["id"] not in existing_posts]
+    clean_posts = []
+    # extract only the interesting keys
+    for post in posts_json:
+        if len(post) == 0:
+            continue
+
+        data = post[0].get("data")
+        post_data = data.get("children")[0].get("data")
+        post_threads = post[1].get("data").get("children")
+        threads = []
+
+        for thread in post_threads:
+            thread_data = thread.get("data")
+            thread_replies = thread_data.get("replies")
+
+            # `replies` is often an empty string when there are no replies; only
+            # descend into it if it's a dict with a `data` field
+            if isinstance(thread_replies, dict):
+                thread_replies = thread_replies.get("data", {}).get("children", [])
+            else:
+                thread_replies = []
+
+            clean_replies = []
+            for reply in thread_replies:
+                # Some reply objects are already the comment data; others may be
+                # a Listing with `children`. Handle both safely.
+                reply_data_obj = reply.get("data", {}) or {}
+                children = reply_data_obj.get("children")
+                if isinstance(children, list) and children and isinstance(children[0], dict):
+                    reply_data = children[0].get("data", {}) or {}
+                else:
+                    reply_data = reply_data_obj or {}
+
+                clean_reply = {
+                    "body": reply_data.get("body"),
+                    "author_fullname": reply_data.get("author_fullname"),
+                    "date_created_utc": reply_data.get("created_utc"),
+                    "url": "https://www.reddit.com" + reply_data.get("permalink"),
+                    "ups": reply_data.get("ups"),
+                }
+                clean_replies.append(clean_reply)
+                
+            clean_thread = {
+                "body": thread_data.get("body"),    
+                "author_fullname": thread_data.get("author_fullname"),
+                "date_created_utc": thread_data.get("created_utc"),
+                "url": "https://www.reddit.com" + thread_data.get("permalink"),
+                "ups": thread_data.get("ups"),
+                "replies": clean_replies
+                }
+            threads.append(clean_thread)
+
+
+        clean_post = {
+                "title": post_data.get('title', 'N/A'),
+                "id": post_data.get("id"),
+                "selftext": post_data.get("selftext"),
+                "thread_author": post_data.get("author"),  
+                "date_created_utc": post_data.get("created_utc"),   
+                "subreddit": post_data.get("subreddit"),
+                "flair_text": post_data.get("link_flair_text"),
+                "ups": post_data.get("ups"),
+                "thread_url": "https://www.reddit.com" + post_data.get("permalink"),
+                "score": post_data.get("score"),
+                "threads": threads
+        }
+        clean_posts.append(clean_post)
+
+    return clean_posts
+
 
 def extract_summary_for_post(prompt):
     response = OpenAI(api_key=os.getenv("OPENAI_API_KEY")).chat.completions.create(
@@ -171,9 +239,10 @@ def extract_summary_for_post(prompt):
     )
     return response.choices[0].message.content
 
-def convert_comments_to_detailed(post):
+
+def convert_comments_to_detailed(post, prompt):
     try:
-        summary_str = extract_summary_for_post(DEFAULT_PROMPT.format(conversation_json=json.dumps(post)))
+        summary_str = extract_summary_for_post(prompt.format(conversation_json=json.dumps(post)))
         summary_json = json.loads(summary_str)
         if len(summary_json) > 1:
             logger.info("Summary is not a single json object")
@@ -181,10 +250,32 @@ def convert_comments_to_detailed(post):
             
         #print(summary_json)
         post.update(summary_json[0])
-        logger.info(summary_json)
+        #logger.info(summary_json)
+        return post
 
     except Exception as e:
-        logger.error(f"Error processing {post}: {e}")
+        #logger.error(f"Error processing {post}: {e}")
+        logger.error(f"Error processing {post["id"]}: {e}")
+
+def upsert_posts(collection_name: str, posts: List[Dict[str, Any]], text_fields: List[str]):
+
+    points = []
+    text_chunks = []
+
+    for text_field in text_fields:
+        for post in posts:
+            # remove threads array and all children from post
+            post.pop("threads", None)
+            post["doc_type"] = "reddit_post"
+            #check if the text_field is in chunk keys
+            if text_field in post.keys():
+                text_chunks.append(vector_store.chunking(text=post[text_field], model="nltk"))  
+
+            for text_chunk in text_chunks:
+                for item in text_chunk:
+                    print("upserting item:", item)
+                    vector_store.upsert_document(collection_name=collection_name, text=item, metadata=post)
+
 
 def process_and_upsert_reddit(
     data: List[Dict[str, Any]],
@@ -200,12 +291,20 @@ def process_and_upsert_reddit(
     Returns:
         Number of records successfully upserted
     """
-    # clean json array and split to single posts
-    clean_posts = clean_comments_json(data)
+    detailed_posts = []
+    clean_posts = clean_and_split_comments(data)
+    for post in clean_posts[:1]:
+        print(post["id"])
 
-    #filter existing posts
-    new_posts = [post for post in clean_posts if post["id"] not in existing_posts]
-    convert_comments_to_detailed(new_posts)
-    upsert_posts(new_posts)
-    return len(new_posts)
+        detailed_post = convert_comments_to_detailed(post, DETAILS_EXTRACTION_PROMPT)
+        detailed_posts.append(detailed_post)
+        #store detailed json in a S3 bucket
+        #s3_client = boto3.client('s3')
+        #s3_client.put_object(Bucket='your-bucket-name', Key=f'detailed_posts/{post["id"]}.json', Body=json.dumps(detailed))
+       
+        reddit_text_fields = ["title","selftext","detailed_description", "discussion_description", "summary"]
+
+    upsert_posts(collection_name, detailed_posts, reddit_text_fields)
+
+    return len(detailed_posts)
 

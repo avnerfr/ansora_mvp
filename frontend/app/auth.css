@@ -1,0 +1,41 @@
+.background-customizable {
+  background-image: none !important;
+  background-color: #ffffff;
+}
+
+/* Header / logo area */
+.banner-customizable {
+  background-color: #ffffff;
+  color: #000000;
+}
+
+/* Labels */
+.label-customizable {
+  color: #000000;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* Input fields */
+.inputField-customizable {
+  border: 1px solid #cccccc;
+  border-radius: 4px;
+  padding: 10px;
+}
+
+/* Submit button */
+.submitButton-customizable {
+  background-color: #000000;
+  color: #ffffff;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.submitButton-customizable:hover {
+  background-color: #333333;
+}
+
+/* Error messages */
+.errorMessage-customizable {
+  color: #cc0000;
+}

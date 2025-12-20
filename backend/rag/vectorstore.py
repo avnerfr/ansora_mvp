@@ -1,6 +1,7 @@
 from langchain_community.vectorstores import Qdrant
 from qdrant_client import QdrantClient
 from typing import List
+from qdrant_client.models import PointStruct, VectorParams, Distance
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
@@ -9,8 +10,14 @@ from core.config import settings
 import uuid
 import logging
 import types
+import nltk
+import re
+from langchain_text_splitters import (RecursiveCharacterTextSplitter, CharacterTextSplitter)
+
+#nltk.download('punkt')
 
 logger = logging.getLogger(__name__)
+
 
 
 class VectorStore:
@@ -22,9 +29,11 @@ class VectorStore:
         self._embeddings = None
         
         # Single Qdrant client (cloud) for both user documents and summaries
+        # Configure with increased timeout for operations that may take longer
         self.client = QdrantClient(
             url=settings.QDRANT_URL,
             api_key=settings.QDRANT_API_KEY if settings.QDRANT_API_KEY else None,
+            timeout=300.0,  # 5 minutes timeout for operations
         )
 
         # Backwards-compatibility shim: some LangChain Qdrant versions expect
@@ -70,6 +79,9 @@ class VectorStore:
             # Monkey‑patch client.search so that LangChain can call it
             self.client.search = types.MethodType(_search, self.client)
     
+    def str_to_qdrant_id(self, str_id: str) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, str_id.strip().lower()))
+    
     @property
     def embeddings(self):
         """Lazy-load OpenAI embeddings for both user documents and cloud collections (LangChain compatible)."""
@@ -85,6 +97,58 @@ class VectorStore:
                 logger.error(f"❌ Failed to create embeddings: {type(e).__name__}: {str(e)}")
                 self._embeddings = None
         return self._embeddings
+
+    def chunking(self, text, model: str = "nltk") -> List[str]:
+        """Chunk the text into a list of strings."""
+        if model == "nltk":
+            try:
+                return nltk.sent_tokenize(text)
+            except Exception as e:
+                logger.error(f"❌ Error chunking text: {e}")
+            return [text]
+        return [text]
+
+    def chunking_langchain(self, text: str,recursive_splitter = False) -> List[str]:
+        """
+        Chunk the text into smaller pieces for retrieval using LangChain.
+        """
+        try:
+            if not text:
+                return []
+            if recursive_splitter:
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=0,
+                    length_function=len,
+                )
+            else:
+                text_splitter = CharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=0,
+                    length_function=len,
+                )
+            chunks = text_splitter.split_text(text)
+            return [c.strip() for c in chunks if c.strip()]
+        except Exception as e:
+            print(f"Error chunking text: {e}")
+            return [text]   
+
+    def chunking_naive(self, text: str) -> List[str]:
+        """
+        Naive sentence chunker:
+        - Splits on ., !, ? followed by whitespace.
+        - Falls back to a single chunk if anything goes wrong.
+        """
+        try:
+            if not text:
+                return []
+            chunks = re.split(r'(?<=[.!?])\s+', text)
+            return [c.strip() for c in chunks if c.strip()]
+        except Exception as e:
+            print(f"Error chunking text: {e}")
+            return [text]
+
+
     
     def get_collection_name(self, user_id: int) -> str:
         """Get the Qdrant collection name for a user."""
@@ -143,6 +207,8 @@ class VectorStore:
             embeddings=self.embeddings,
         )
         return vector_store.as_retriever(search_kwargs={"k": k})
+
+
     
     def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post") -> List[Document]:
         """Search marketing summaries from the shared cloud Qdrant collection."""
@@ -462,36 +528,25 @@ class VectorStore:
     def upsert_document(self, collection_name: str, text: str, metadata: dict) -> bool:
         """Upsert a single document into a collection."""
         try:
-            from qdrant_client.models import PointStruct, VectorParams, Distance
-            
-            # Ensure collection exists
-            collections = self.client.get_collections().collections
-            collection_names = [c.name for c in collections]
-            
-            if collection_name not in collection_names:
-                logger.info(f"Creating collection: {collection_name}")
-                self.client.create_collection(
-                    collection_name=collection_name,
-                    vectors_config=VectorParams(size=self._vector_size, distance=Distance.COSINE)
-                )
             
             # Generate embedding
             if self.embeddings is None:
                 logger.error("Embeddings not initialized")
                 return False
-            
-            embedding = self.embeddings.embed_query(text)
-            
+            print("text:", text)
+            vector = self.embeddings.embed_query(text)
+            logger.debug("✓ Vector generated: " + text)
+
             # Generate unique ID
-            point_id = str(uuid.uuid4())
-            
+            point_id = self.str_to_qdrant_id(metadata["id"])
+            logger.debug("✓ Point ID generated: " + point_id)
             # Upsert point
             self.client.upsert(
                 collection_name=collection_name,
                 points=[
                     PointStruct(
                         id=point_id,
-                        vector=embedding,
+                        vector=vector,
                         payload=metadata
                     )
                 ]

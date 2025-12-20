@@ -11,6 +11,9 @@ export const isAuthenticated = (): boolean => {
 }
 
 export const logout = (): void => {
+  // Clear cookies first
+  clearAllCognitoCookies()
+  // Then redirect to logout endpoint
   window.location.href = '/api/auth/logout'
 }
 
@@ -37,5 +40,31 @@ export const isAdmin = (): boolean => {
   } catch {
     return false
   }
+}
+
+// Clear all Cognito-related cookies (useful for clearing obsolete tokens)
+export const clearAllCognitoCookies = (): void => {
+  if (typeof window === 'undefined') return
+  
+  const cookiesToDelete = [
+    'cognito_access_token',
+    'cognito_id_token',
+    'cognito_refresh_token',
+    'cognito_user',
+    'oidc_nonce',
+    'oidc_state',
+  ]
+  
+  const hostname = window.location.hostname
+  const baseDomain = hostname.split('.').slice(-2).join('.')
+  
+  cookiesToDelete.forEach(cookieName => {
+    // Delete with different path and domain options to ensure it's cleared
+    document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`
+    document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=${hostname};`
+    if (baseDomain !== hostname) {
+      document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.${baseDomain};`
+    }
+  })
 }
 

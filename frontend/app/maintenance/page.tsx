@@ -7,7 +7,7 @@ import { Button } from '@/components/Button'
 import { isAdmin, isAuthenticated } from '@/lib/auth'
 import { maintenanceAPI } from '@/lib/api'
 
-type TabType = 'vectordb' | 'upsert'
+type TabType = 'vectordb' | 'upsert' | 'modeltest'
 
 export default function MaintenancePage() {
   const router = useRouter()
@@ -46,8 +46,22 @@ export default function MaintenancePage() {
   const [uploading, setUploading] = useState(false)
   const [uploadMessage, setUploadMessage] = useState('')
 
+  // Model Test state
+  const [vendor, setVendor] = useState<string>('')
+  const [availableModels, setAvailableModels] = useState<Array<{id: string, display_name?: string, cost: string}>>([])
+  const [selectedModel, setSelectedModel] = useState<string>('')
+  const [systemPrompt, setSystemPrompt] = useState<string>('')
+  const [prompt, setPrompt] = useState<string>('')
+  const [placeholders, setPlaceholders] = useState<Array<{key: string, text: string, file?: File}>>([{key: '', text: ''}])
+  const [processing, setProcessing] = useState(false)
+  const [answer, setAnswer] = useState<string>('')
+
   useEffect(() => {
     if (!isAuthenticated()) {
+      // Store intended destination in cookie before redirecting
+      if (typeof window !== 'undefined') {
+        document.cookie = `redirect_after_login=/maintenance; path=/; max-age=300` // 5 minutes
+      }
       router.push('/auth/login')
       return
     }
@@ -207,6 +221,76 @@ export default function MaintenancePage() {
     }
   }
 
+  // Model Test handlers
+  const handleVendorChange = async (newVendor: string) => {
+    setVendor(newVendor)
+    setSelectedModel('')
+    setAvailableModels([])
+    if (newVendor) {
+      try {
+        const data = await maintenanceAPI.getModels(newVendor)
+        setAvailableModels(data.models || [])
+      } catch (error) {
+        console.error('Failed to load models:', error)
+      }
+    }
+  }
+
+  const handleModelChange = (newModel: string) => {
+    setSelectedModel(newModel)
+  }
+
+  const addPlaceholder = () => {
+    setPlaceholders([...placeholders, {key: '', text: ''}])
+  }
+
+  const removePlaceholder = (index: number) => {
+    setPlaceholders(placeholders.filter((_, i) => i !== index))
+  }
+
+  const updatePlaceholder = (index: number, field: 'key' | 'text', value: string) => {
+    const updated = [...placeholders]
+    updated[index] = { ...updated[index], [field]: value }
+    setPlaceholders(updated)
+  }
+
+  const handlePlaceholderFile = async (index: number, file: File) => {
+    const text = await file.text()
+    updatePlaceholder(index, 'text', text)
+  }
+
+  const handleProcess = async () => {
+    if (!vendor || !selectedModel || !systemPrompt || !prompt) {
+      return
+    }
+    
+    setProcessing(true)
+    try {
+      // Build placeholders object (only include entries with keys)
+      const placeholdersObj: Record<string, string> = {}
+      placeholders.forEach(p => {
+        if (p.key.trim()) {
+          placeholdersObj[p.key.trim()] = p.text
+        }
+      })
+
+      const result = await maintenanceAPI.testModel(
+        vendor,
+        selectedModel,
+        systemPrompt,
+        prompt,
+        placeholdersObj
+      )
+      
+      // Only update the answer, nothing else
+      setAnswer(result.answer || '')
+    } catch (error: any) {
+      setAnswer(`Error: ${error.response?.data?.detail || error.message || 'Failed to process'}`)
+    } finally {
+      setProcessing(false)
+    }
+  }
+
   if (!authChecked) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -246,6 +330,16 @@ export default function MaintenancePage() {
               }`}
             >
               Upsert Data
+            </button>
+            <button
+              onClick={() => setActiveTab('modeltest')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'modeltest'
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Model Test
             </button>
           </nav>
         </div>
@@ -623,6 +717,198 @@ export default function MaintenancePage() {
                   </Button>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Model Test Tab */}
+        {activeTab === 'modeltest' && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="space-y-6">
+              {/* Vendor Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Vendor
+                </label>
+                <div className="flex items-center gap-4">
+                  <select
+                    value={vendor}
+                    onChange={(e) => handleVendorChange(e.target.value)}
+                    className="w-64 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="">Select a vendor</option>
+                    <option value="deepinfra">DeepInfra</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="groq">Groq</option>
+                  </select>
+                  {vendor === 'deepinfra' && (
+                    <a
+                      href="https://deepinfra.com/models"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary-600 hover:text-primary-700 underline text-sm"
+                    >
+                      View Models
+                    </a>
+                  )}
+                  {vendor === 'openai' && (
+                    <a
+                      href="https://platform.openai.com/docs/models/compare"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary-600 hover:text-primary-700 underline text-sm"
+                    >
+                      View Models
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              {/* Model Selection */}
+              {vendor && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Model
+                  </label>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => handleModelChange(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="">Select a model</option>
+                    {availableModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.display_name || model.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* System Prompt */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  System Prompt
+                </label>
+                <textarea
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  rows={6}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                  placeholder="Enter system prompt here..."
+                />
+              </div>
+
+              {/* Prompt */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Prompt
+                </label>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  rows={6}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                  placeholder="Enter prompt here..."
+                />
+              </div>
+
+              {/* Placeholders Table */}
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Placeholders
+                  </label>
+                  <Button onClick={addPlaceholder} variant="secondary" className="text-sm">
+                    Add Placeholder
+                  </Button>
+                </div>
+                <div className="border border-gray-300 rounded-md overflow-hidden">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Key</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Text</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">File</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {placeholders.map((placeholder, index) => (
+                        <tr key={index}>
+                          <td className="px-4 py-3">
+                            <input
+                              type="text"
+                              value={placeholder.key}
+                              onChange={(e) => updatePlaceholder(index, 'key', e.target.value)}
+                              placeholder="e.g., {key}"
+                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <textarea
+                              value={placeholder.text}
+                              onChange={(e) => updatePlaceholder(index, 'text', e.target.value)}
+                              rows={2}
+                              placeholder="Paste text or upload file"
+                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            <input
+                              type="file"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0]
+                                if (file) {
+                                  handlePlaceholderFile(index, file)
+                                }
+                              }}
+                              className="text-sm"
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            {placeholders.length > 1 && (
+                              <button
+                                onClick={() => removePlaceholder(index)}
+                                className="text-red-500 hover:text-red-700"
+                              >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Process Button */}
+              <Button
+                onClick={handleProcess}
+                variant="primary"
+                isLoading={processing}
+                disabled={!vendor || !selectedModel || !systemPrompt || !prompt}
+              >
+                Process
+              </Button>
+
+              {/* Answer Display */}
+              {answer && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Answer from Model
+                  </label>
+                  <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                    <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">
+                      {answer}
+                    </pre>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

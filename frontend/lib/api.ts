@@ -42,6 +42,11 @@ apiClient.interceptors.response.use(
       !url.includes('/auth/register')
     ) {
       if (typeof window !== 'undefined') {
+        // Store current path as redirect destination
+        const currentPath = window.location.pathname
+        if (currentPath && currentPath !== '/auth/login') {
+          document.cookie = `redirect_after_login=${currentPath}; path=/; max-age=300` // 5 minutes
+        }
         window.location.href = '/api/auth/logout'
       }
     }
@@ -169,6 +174,29 @@ export const maintenanceAPI = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+    })
+    return response.data
+  },
+  // Model testing
+  getModels: async (vendor: string) => {
+    const response = await apiClient.get('/maintenance/model-test/models', {
+      params: { vendor }
+    })
+    return response.data
+  },
+  getModelCost: async (vendor: string, model: string) => {
+    const response = await apiClient.get('/maintenance/model-test/cost', {
+      params: { vendor, model }
+    })
+    return response.data
+  },
+  testModel: async (vendor: string, model: string, systemPrompt: string, prompt: string, placeholders: Record<string, string>) => {
+    const response = await apiClient.post('/maintenance/model-test', {
+      vendor,
+      model,
+      system_prompt: systemPrompt,
+      prompt,
+      placeholders
     })
     return response.data
   },
