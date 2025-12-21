@@ -190,11 +190,11 @@ export const maintenanceAPI = {
     })
     return response.data
   },
-  testModel: async (vendor: string, model: string, systemPrompt: string, prompt: string, placeholders: Record<string, string>) => {
+  testModel: async (vendor: string, model: string, systemPrompt: string | undefined, prompt: string, placeholders: Record<string, string>) => {
     const response = await apiClient.post('/maintenance/model-test', {
       vendor,
       model,
-      system_prompt: systemPrompt,
+      system_prompt: systemPrompt || null,
       prompt,
       placeholders
     })

@@ -48,8 +48,9 @@ export default function MaintenancePage() {
 
   // Model Test state
   const [vendor, setVendor] = useState<string>('')
-  const [availableModels, setAvailableModels] = useState<Array<{id: string, display_name?: string, cost: string}>>([])
+  const [availableModels, setAvailableModels] = useState<Array<{id: string, display_name?: string, cost: string, url?: string}>>([])
   const [selectedModel, setSelectedModel] = useState<string>('')
+  const [selectedModelUrl, setSelectedModelUrl] = useState<string>('')
   const [systemPrompt, setSystemPrompt] = useState<string>('')
   const [prompt, setPrompt] = useState<string>('')
   const [placeholders, setPlaceholders] = useState<Array<{key: string, text: string, file?: File}>>([{key: '', text: ''}])
@@ -225,6 +226,7 @@ export default function MaintenancePage() {
   const handleVendorChange = async (newVendor: string) => {
     setVendor(newVendor)
     setSelectedModel('')
+    setSelectedModelUrl('')
     setAvailableModels([])
     if (newVendor) {
       try {
@@ -238,6 +240,9 @@ export default function MaintenancePage() {
 
   const handleModelChange = (newModel: string) => {
     setSelectedModel(newModel)
+    // Find the URL for the selected model
+    const model = availableModels.find(m => m.id === newModel)
+    setSelectedModelUrl(model?.url || '')
   }
 
   const addPlaceholder = () => {
@@ -260,7 +265,7 @@ export default function MaintenancePage() {
   }
 
   const handleProcess = async () => {
-    if (!vendor || !selectedModel || !systemPrompt || !prompt) {
+    if (!vendor || !selectedModel || !prompt) {
       return
     }
     
@@ -277,7 +282,7 @@ export default function MaintenancePage() {
       const result = await maintenanceAPI.testModel(
         vendor,
         selectedModel,
-        systemPrompt,
+        systemPrompt || undefined,
         prompt,
         placeholdersObj
       )
@@ -771,32 +776,44 @@ export default function MaintenancePage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Model
                   </label>
-                  <select
-                    value={selectedModel}
-                    onChange={(e) => handleModelChange(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                  >
-                    <option value="">Select a model</option>
-                    {availableModels.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.display_name || model.id}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex items-center gap-4">
+                    <select
+                      value={selectedModel}
+                      onChange={(e) => handleModelChange(e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                    >
+                      <option value="">Select a model</option>
+                      {availableModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.display_name || model.id} - {model.cost}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedModelUrl && (
+                      <a
+                        href={selectedModelUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary-600 hover:text-primary-700 underline text-sm whitespace-nowrap"
+                      >
+                        View Model Details
+                      </a>
+                    )}
+                  </div>
                 </div>
               )}
 
               {/* System Prompt */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  System Prompt
+                  System Prompt <span className="text-gray-500 text-xs font-normal">(optional)</span>
                 </label>
                 <textarea
                   value={systemPrompt}
                   onChange={(e) => setSystemPrompt(e.target.value)}
                   rows={6}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
-                  placeholder="Enter system prompt here..."
+                  placeholder="Enter system prompt here (optional)..."
                 />
               </div>
 

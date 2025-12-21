@@ -362,56 +362,243 @@ async def upsert_data(
 class ModelTestRequest(BaseModel):
     vendor: str  # "openai", "deepinfra", "openrouter", "groq"
     model: str
-    system_prompt: str
+    system_prompt: Optional[str] = None
     prompt: str
     placeholders: Dict[str, str]  # key -> text mapping
 
 
-# Model configurations with costs (per 1M tokens)
+# Model configurations with costs (per 1M tokens) and description URLs
 MODEL_CONFIGS = {
     "openai": {
         "models": {
-            "gpt-4o-mini": {"cost_input": 0.15, "cost_output": 0.6, "display_name": "GPT-4o mini"},
-            "gpt-4o": {"cost_input": 2.5, "cost_output": 10.0, "display_name": "GPT-4o"},
-            "gpt-4.1": {"cost_input": 10.0, "cost_output": 30.0, "display_name": "GPT-4.1"},
-            "gpt-5-mini": {"cost_input": 0.5, "cost_output": 1.5, "display_name": "GPT-5 mini"},
-            "gpt-5-nano": {"cost_input": 0.3, "cost_output": 1.0, "display_name": "GPT-5 nano"},
-            "gpt-5": {"cost_input": 5.0, "cost_output": 15.0, "display_name": "GPT-5"},
-            "gpt-5.2": {"cost_input": 8.0, "cost_output": 25.0, "display_name": "GPT-5.2"},
+            "gpt-4o-mini": {
+                "cost_input": 0.15, 
+                "cost_output": 0.6, 
+                "display_name": "GPT-4o mini",
+                "url": "https://platform.openai.com/docs/models/gpt-4o-mini"
+            },
+            "gpt-4o": {
+                "cost_input": 2.5, 
+                "cost_output": 10.0, 
+                "display_name": "GPT-4o",
+                "url": "https://platform.openai.com/docs/models/gpt-4o"
+            },
+            "gpt-4-turbo": {
+                "cost_input": 10.0, 
+                "cost_output": 30.0, 
+                "display_name": "GPT-4 Turbo",
+                "url": "https://platform.openai.com/docs/models/gpt-4-turbo"
+            },
+            "gpt-4": {
+                "cost_input": 30.0, 
+                "cost_output": 60.0, 
+                "display_name": "GPT-4",
+                "url": "https://platform.openai.com/docs/models/gpt-4"
+            },
+            "gpt-3.5-turbo": {
+                "cost_input": 0.5, 
+                "cost_output": 1.5, 
+                "display_name": "GPT-3.5 Turbo",
+                "url": "https://platform.openai.com/docs/models/gpt-3-5-turbo"
+            },
         }
     },
     "deepinfra": {
         "models": {
-            "google/gemma-3-27b-it": {"cost_input": 0.15, "cost_output": 0.15, "display_name": "Google Gemma 3 27B IT"},
-            "google/gemma-3-12b-it": {"cost_input": 0.08, "cost_output": 0.08, "display_name": "Google Gemma 3 12B IT"},
-            "google/gemma-3-4b-it": {"cost_input": 0.03, "cost_output": 0.03, "display_name": "Google Gemma 3 4B IT"},
-            "meta-llama/Llama-3.3-70B-Instruct-Turbo": {"cost_input": 0.59, "cost_output": 0.79, "display_name": "Meta Llama 3.3 70B Instruct Turbo"},
-            "microsoft/phi-4": {"cost_input": 0.10, "cost_output": 0.10, "display_name": "Microsoft Phi-4"},
-            "nvidia/Nemotron-3-Nano-30B-A3B": {"cost_input": 0.06, "cost_output": 0.24, "display_name": "NVIDIA Nemotron 3 Nano 30B A3B"},
-            "deepseek-ai/DeepSeek-V3.2": {"cost_input": 0.13, "cost_output": 0.39, "display_name": "DeepSeek V3.2"},
-            "deepseek-ai/DeepSeek-V3.1-Terminus": {"cost_input": 0.21, "cost_output": 0.79, "display_name": "DeepSeek V3.1 Terminus"},
-            "deepseek-ai/DeepSeek-V3.1": {"cost_input": 0.21, "cost_output": 0.79, "display_name": "DeepSeek V3.1"},
-            "openai/gpt-oss-120b": {"cost_input": 0.039, "cost_output": 0.19, "display_name": "OpenAI GPT-OSS 120B"},
-            "openai/gpt-oss-20b": {"cost_input": 0.03, "cost_output": 0.14, "display_name": "OpenAI GPT-OSS 20B"},
-            "Qwen/Qwen3-235B-A22B-Instruct-2507": {"cost_input": 0.071, "cost_output": 0.463, "display_name": "Qwen3 235B A22B Instruct 2507"},
-            "Qwen/Qwen3-30B-A3B": {"cost_input": 0.08, "cost_output": 0.29, "display_name": "Qwen3 30B A3B"},
-            "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": {"cost_input": 0.15, "cost_output": 0.25, "display_name": "Meta Llama 4 Maverick 17B 128E Instruct FP8"},
-            "meta-llama/Llama-4-Scout-17B-16E-Instruct": {"cost_input": 0.12, "cost_output": 0.20, "display_name": "Meta Llama 4 Scout 17B 16E Instruct"},
+            "anthropic/claude-4-opus": {
+                "cost_input": 16.50, 
+                "cost_output": 82.50, 
+                "display_name": "Anthropic Claude 4 Opus",
+                "url": "https://deepinfra.com/anthropic/claude-4-opus"
+            },
+            "anthropic/claude-4-sonnet": {
+                "cost_input": 3.0, 
+                "cost_output": 15.0, 
+                "display_name": "Anthropic Claude 4 Sonnet",
+                "url": "https://deepinfra.com/anthropic/claude-4-sonnet"
+            },
+            "anthropic/claude-3.7-sonnet-latest": {
+                "cost_input": 3.0, 
+                "cost_output": 15.0, 
+                "display_name": "Anthropic Claude 3.7 Sonnet",
+                "url": "https://deepinfra.com/anthropic/claude-3-7-sonnet-latest"
+            },
+            "deepseek-ai/DeepSeek-V3.2": {
+                "cost_input": 0.13, 
+                "cost_output": 0.39, 
+                "display_name": "DeepSeek V3.2",
+                "url": "https://deepinfra.com/deepseek-ai/DeepSeek-V3.2"
+            },
+            "deepseek-ai/DeepSeek-V3.1-Terminus": {
+                "cost_input": 0.21, 
+                "cost_output": 0.79, 
+                "display_name": "DeepSeek V3.1 Terminus",
+                "url": "https://deepinfra.com/deepseek-ai/DeepSeek-V3.1-Terminus"
+            },
+            "deepseek-ai/DeepSeek-V3.1": {
+                "cost_input": 0.21, 
+                "cost_output": 0.79, 
+                "display_name": "DeepSeek V3.1",
+                "url": "https://deepinfra.com/deepseek-ai/DeepSeek-V3.1"
+            },
+            "deepseek-ai/DeepSeek-R1-0528-Turbo": {
+                "cost_input": 1.0, 
+                "cost_output": 3.0, 
+                "display_name": "DeepSeek R1 0528 Turbo",
+                "url": "https://deepinfra.com/deepseek-ai/DeepSeek-R1-0528-Turbo"
+            },
+            "google/gemma-3-27b-it": {
+                "cost_input": 0.15, 
+                "cost_output": 0.15, 
+                "display_name": "Google Gemma 3 27B IT",
+                "url": "https://deepinfra.com/google/gemma-3-27b-it"
+            },
+            "google/gemma-3-12b-it": {
+                "cost_input": 0.08, 
+                "cost_output": 0.08, 
+                "display_name": "Google Gemma 3 12B IT",
+                "url": "https://deepinfra.com/google/gemma-3-12b-it"
+            },
+            "google/gemma-3-4b-it": {
+                "cost_input": 0.03, 
+                "cost_output": 0.03, 
+                "display_name": "Google Gemma 3 4B IT",
+                "url": "https://deepinfra.com/google/gemma-3-4b-it"
+            },
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo": {
+                "cost_input": 0.59, 
+                "cost_output": 0.79, 
+                "display_name": "Meta Llama 3.3 70B Instruct Turbo",
+                "url": "https://deepinfra.com/meta-llama/Llama-3.3-70B-Instruct-Turbo"
+            },
+            "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": {
+                "cost_input": 0.15, 
+                "cost_output": 0.25, 
+                "display_name": "Meta Llama 4 Maverick 17B",
+                "url": "https://deepinfra.com/meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"
+            },
+            "meta-llama/Llama-4-Scout-17B-16E-Instruct": {
+                "cost_input": 0.12, 
+                "cost_output": 0.20, 
+                "display_name": "Meta Llama 4 Scout 17B",
+                "url": "https://deepinfra.com/meta-llama/Llama-4-Scout-17B-16E-Instruct"
+            },
+            "microsoft/phi-4": {
+                "cost_input": 0.10, 
+                "cost_output": 0.10, 
+                "display_name": "Microsoft Phi-4",
+                "url": "https://deepinfra.com/microsoft/phi-4"
+            },
+            "mistralai/Mixtral-8x7B-Instruct-v0.1": {
+                "cost_input": 0.24, 
+                "cost_output": 0.24, 
+                "display_name": "Mistral Mixtral 8x7B Instruct",
+                "url": "https://deepinfra.com/mistralai/Mixtral-8x7B-Instruct-v0.1"
+            },
+            "mistralai/Voxtral-Small-24B-2507": {
+                "cost_input": 0.003, 
+                "cost_output": 0.003, 
+                "display_name": "Mistral Voxtral Small 24B",
+                "url": "https://deepinfra.com/mistralai/Voxtral-Small-24B-2507"
+            },
+            "moonshotai/Kimi-K2-Instruct-0905": {
+                "cost_input": 0.32, 
+                "cost_output": 2.0, 
+                "display_name": "Moonshot Kimi K2 Instruct",
+                "url": "https://deepinfra.com/moonshotai/Kimi-K2-Instruct-0905"
+            },
+            "nvidia/Nemotron-3-Nano-30B-A3B": {
+                "cost_input": 0.06, 
+                "cost_output": 0.24, 
+                "display_name": "NVIDIA Nemotron 3 Nano 30B",
+                "url": "https://deepinfra.com/nvidia/Nemotron-3-Nano-30B-A3B"
+            },
+            "openai/gpt-oss-120b": {
+                "cost_input": 0.039, 
+                "cost_output": 0.19, 
+                "display_name": "OpenAI GPT-OSS 120B",
+                "url": "https://deepinfra.com/openai/gpt-oss-120b"
+            },
+            "openai/gpt-oss-20b": {
+                "cost_input": 0.03, 
+                "cost_output": 0.14, 
+                "display_name": "OpenAI GPT-OSS 20B",
+                "url": "https://deepinfra.com/openai/gpt-oss-20b"
+            },
+            "Qwen/Qwen3-235B-A22B-Instruct-2507": {
+                "cost_input": 0.071, 
+                "cost_output": 0.463, 
+                "display_name": "Qwen3 235B A22B Instruct",
+                "url": "https://deepinfra.com/Qwen/Qwen3-235B-A22B-Instruct-2507"
+            },
+            "Qwen/Qwen3-30B-A3B": {
+                "cost_input": 0.08, 
+                "cost_output": 0.29, 
+                "display_name": "Qwen3 30B A3B",
+                "url": "https://deepinfra.com/Qwen/Qwen3-30B-A3B"
+            },
+            "Qwen/Qwen3-Coder-480B-A35B-Instruct": {
+                "cost_input": 0.40, 
+                "cost_output": 1.60, 
+                "display_name": "Qwen3 Coder 480B",
+                "url": "https://deepinfra.com/Qwen/Qwen3-Coder-480B-A35B-Instruct"
+            },
+            "zai-org/GLM-4.6": {
+                "cost_input": 0.08, 
+                "cost_output": 1.75, 
+                "display_name": "GLM-4.6",
+                "url": "https://deepinfra.com/zai-org/GLM-4.6"
+            },
         }
     },
     "openrouter": {
         "models": {
-            "openai/gpt-4o": {"cost_input": 2.5, "cost_output": 10.0},
-            "openai/gpt-4o-mini": {"cost_input": 0.15, "cost_output": 0.6},
-            "anthropic/claude-3.5-sonnet": {"cost_input": 3.0, "cost_output": 15.0},
-            "google/gemini-pro-1.5": {"cost_input": 1.25, "cost_output": 5.0},
+            "openai/gpt-4o": {
+                "cost_input": 2.5, 
+                "cost_output": 10.0,
+                "display_name": "GPT-4o",
+                "url": "https://openrouter.ai/models/openai/gpt-4o"
+            },
+            "openai/gpt-4o-mini": {
+                "cost_input": 0.15, 
+                "cost_output": 0.6,
+                "display_name": "GPT-4o mini",
+                "url": "https://openrouter.ai/models/openai/gpt-4o-mini"
+            },
+            "anthropic/claude-3.5-sonnet": {
+                "cost_input": 3.0, 
+                "cost_output": 15.0,
+                "display_name": "Claude 3.5 Sonnet",
+                "url": "https://openrouter.ai/models/anthropic/claude-3.5-sonnet"
+            },
+            "google/gemini-pro-1.5": {
+                "cost_input": 1.25, 
+                "cost_output": 5.0,
+                "display_name": "Gemini Pro 1.5",
+                "url": "https://openrouter.ai/models/google/gemini-pro-1.5"
+            },
         }
     },
     "groq": {
         "models": {
-            "llama-3.1-70b-versatile": {"cost_input": 0.0, "cost_output": 0.0},  # Free tier
-            "llama-3.1-8b-instant": {"cost_input": 0.0, "cost_output": 0.0},  # Free tier
-            "mixtral-8x7b-32768": {"cost_input": 0.0, "cost_output": 0.0},  # Free tier
+            "llama-3.1-70b-versatile": {
+                "cost_input": 0.0, 
+                "cost_output": 0.0,
+                "display_name": "Llama 3.1 70B Versatile",
+                "url": "https://console.groq.com/docs/models"
+            },
+            "llama-3.1-8b-instant": {
+                "cost_input": 0.0, 
+                "cost_output": 0.0,
+                "display_name": "Llama 3.1 8B Instant",
+                "url": "https://console.groq.com/docs/models"
+            },
+            "mixtral-8x7b-32768": {
+                "cost_input": 0.0, 
+                "cost_output": 0.0,
+                "display_name": "Mixtral 8x7B",
+                "url": "https://console.groq.com/docs/models"
+            },
         }
     }
 }
@@ -435,6 +622,18 @@ def get_model_cost(vendor: str, model: str) -> str:
     
     return f"${cost_input:.2f} / ${cost_output:.2f} per 1M tokens (input/output)"
 
+def get_model_url(vendor: str, model: str) -> Optional[str]:
+    """Get description URL for a model."""
+    vendor_config = MODEL_CONFIGS.get(vendor.lower())
+    if not vendor_config:
+        return None
+    
+    model_info = vendor_config["models"].get(model)
+    if not model_info:
+        return None
+    
+    return model_info.get("url")
+
 
 async def call_openai(model: str, system_prompt: str, prompt: str, api_key: str) -> str:
     """Call OpenAI API."""
@@ -443,12 +642,14 @@ async def call_openai(model: str, system_prompt: str, prompt: str, api_key: str)
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+        "messages": messages
     }
     
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -467,12 +668,14 @@ async def call_openrouter(model: str, system_prompt: str, prompt: str, api_key: 
         "HTTP-Referer": "https://mvp-marketing.app",
         "X-Title": "MVP Marketing"
     }
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+        "messages": messages
     }
     
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -489,12 +692,14 @@ async def call_deepinfra(model: str, system_prompt: str, prompt: str, api_key: s
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+        "messages": messages
     }
     
     logger.debug(f"DeepInfra API call - URL: {url}, Model: {model}")
@@ -696,12 +901,14 @@ async def call_groq(model: str, system_prompt: str, prompt: str, api_key: str) -
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
     }
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
     payload = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
+        "messages": messages
     }
     
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -721,7 +928,7 @@ async def test_model(
         from core.config import settings
         
         # Replace placeholders in system prompt and prompt
-        system_prompt = request.system_prompt
+        system_prompt = request.system_prompt or ""
         prompt = request.prompt
         
         for key, value in request.placeholders.items():
@@ -730,7 +937,8 @@ async def test_model(
                 placeholder = key
             else:
                 placeholder = f"{{{key}}}"
-            system_prompt = system_prompt.replace(placeholder, value)
+            if system_prompt:
+                system_prompt = system_prompt.replace(placeholder, value)
             prompt = prompt.replace(placeholder, value)
         
         # Get API key based on vendor
@@ -778,35 +986,32 @@ async def get_models(
     vendor: str,
     current_user: User = Depends(require_admin)
 ):
-    """Get available models for a vendor by fetching from vendor API."""
+    """Get available models for a vendor from MODEL_CONFIGS."""
     vendor_lower = vendor.lower()
+    vendor_config = MODEL_CONFIGS.get(vendor_lower)
     
-    # Get API key based on vendor
-    api_key = None
-    if vendor_lower == "openai":
-        api_key = os.getenv("OPENAI_API_KEY", "")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="OPENAI_API_KEY not configured")
-        models = await fetch_openai_models(api_key)
-    elif vendor_lower == "deepinfra":
-        api_key = os.getenv("DEEPINFRA_API_KEY", "")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="DEEPINFRA_API_KEY not configured")
-        models = await fetch_deepinfra_models(api_key)
-    elif vendor_lower == "openrouter":
-        api_key = os.getenv("OPENROUTER_API_KEY", "")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="OPENROUTER_API_KEY not configured")
-        models = await fetch_openrouter_models(api_key)
-    elif vendor_lower == "groq":
-        api_key = os.getenv("GROQ_API_KEY", "")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="GROQ_API_KEY not configured")
-        models = await fetch_groq_models(api_key)
-    else:
+    if not vendor_config:
         raise HTTPException(status_code=400, detail=f"Unknown vendor: {vendor}")
     
-    logger.info(f"Fetched {len(models)} models from {vendor}")
+    models = []
+    for model_id, model_info in vendor_config["models"].items():
+        cost_input = model_info.get("cost_input", 0)
+        cost_output = model_info.get("cost_output", 0)
+        
+        # Format cost
+        if cost_input == 0 and cost_output == 0:
+            cost_str = "Free"
+        else:
+            cost_str = f"${cost_input:.2f} / ${cost_output:.2f} per 1M tokens (input/output)"
+        
+        models.append({
+            "id": model_id,
+            "display_name": model_info.get("display_name", model_id),
+            "cost": cost_str,
+            "url": model_info.get("url")
+        })
+    
+    logger.info(f"Returned {len(models)} models from MODEL_CONFIGS for {vendor}")
     return {"models": models}
 
 
