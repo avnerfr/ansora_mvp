@@ -126,7 +126,7 @@ async def create_collection(
             vectors_config=VectorParams(size=vector_size, distance=distance_map[distance])
         )
         
-        # Create index on doc_type field for efficient filtering
+        # Create indexes on doc_type and post_id fields for efficient filtering
         from qdrant_client.models import PayloadSchemaType
         try:
             vector_store.client.create_payload_index(
@@ -138,6 +138,18 @@ async def create_collection(
         except Exception as index_error:
             # Log but don't fail if index creation fails (e.g., index already exists)
             logger.warning(f"Could not create index on 'doc_type' for {collection_name}: {index_error}")
+        
+        # Create index on post_id field for duplicate prevention
+        try:
+            vector_store.client.create_payload_index(
+                collection_name=collection_name,
+                field_name="post_id",
+                field_schema=PayloadSchemaType.KEYWORD
+            )
+            logger.info(f"Created index on 'post_id' field for collection: {collection_name}")
+        except Exception as index_error:
+            # Log but don't fail if index creation fails (e.g., index already exists)
+            logger.warning(f"Could not create index on 'post_id' for {collection_name}: {index_error}")
         
         logger.info(f"Created collection: {collection_name} (vector_size={vector_size}, distance={distance})")
         return {

@@ -51,10 +51,15 @@ Check if the collection actually has points:
 
 ```python
 from qdrant_client import QdrantClient
+from dotenv import load_dotenv
+# Initialize clients
+load_dotenv()
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 client = QdrantClient(
-    url="https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333",
-    api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.s53XfrTWp0MHokNbtLSx2ikhLdi9Miru2Q99NxACFo8"
+    url=QDRANT_URL,
+    api_key=QDRANT_API_KEY
 )
 
 collection_info = client.get_collection("reddit_posts")
@@ -70,10 +75,17 @@ Test if search works:
 from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 
+from dotenv import load_dotenv
+# Initialize clients
+load_dotenv()
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+
+
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 client = QdrantClient(
-    url="https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333",
-    api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.s53XfrTWp0MHokNbtLSx2ikhLdi9Miru2Q99NxACFo8"
+    url=QDRANT_URL,
+    api_key=QDRANT_API_KEY
 )
 
 query = "security updates"

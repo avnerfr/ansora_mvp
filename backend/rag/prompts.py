@@ -114,7 +114,7 @@ END
 """
 
 
-VECTOR_DB_RETREIVAL_PROMPT = f"""
+VECTOR_DB_RETREIVAL_PROMPT = """
 You are a retrieval query generator for a practitioner-first RAG system.
 Task: Convert any user input—technical, operational, organizational, or even career/personal—into 3–5 concrete, operational search queries. Queries must reflect real-life practitioner struggles and symptoms, phrased as if a practitioner is asking for help in forums, postmortems, or operational discussions.
 
@@ -150,8 +150,9 @@ FINAL VALIDATION:
 Check each sentence: it must directly reflect the input in some way
 No sentence should include the original abstract label or synonyms if the input was abstract
 Each sentence must describe a practically observable problem or risk
-this is the user text: {{user_provided_text}}
-this is the backgrounds of the query: {{backgrounds}}
+
+this is the user text: {user_provided_text}
+this is the backgrounds of the query: {backgrounds}
 """
 
 

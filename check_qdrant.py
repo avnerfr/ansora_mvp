@@ -17,12 +17,17 @@ except Exception as e:
     print(f"Error: {e}")
 
 print()
+from dotenv import load_dotenv
+# Initialize clients
+load_dotenv()
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
 # 2. Check Cloud Qdrant (Reddit posts)
 print("=== CLOUD QDRANT (REDDIT POSTS) ===")
 cloud_client = QdrantClient(
-    url="https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333",
-    api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.s53XfrTWp0MHokNbtLSx2ikhLdi9Miru2Q99NxACFo8"
+    url=QDRANT_URL,
+    api_key=QDRANT_API_KEY
 )
 
 try:

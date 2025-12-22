@@ -365,11 +365,16 @@ async def build_retrieval_query(
         str: The optimized retrieval query
     """
     logger.info("Building optimized retrieval query for vector DB...")
-    backgrounds_str = ", ".join(backgrounds)
+    backgrounds_str = ", ".join(backgrounds) if backgrounds else ""
 
-    retrieval_prompt = VECTOR_DB_RETREIVAL_PROMPT
-    retrieval_prompt = retrieval_prompt.replace("{{user_provided_text}}", marketing_text)
-    retrieval_prompt = retrieval_prompt.replace("{{backgrounds}}", backgrounds_str)
+    # Ensure marketing_text and backgrounds_str are strings and not None
+    marketing_text = marketing_text or ""
+    backgrounds_str = backgrounds_str or ""
+
+    retrieval_prompt = VECTOR_DB_RETREIVAL_PROMPT.format(
+        user_provided_text=marketing_text,
+        backgrounds=backgrounds_str
+    )
 
     logger.info("$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT $$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
     logger.info(retrieval_prompt)

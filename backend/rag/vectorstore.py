@@ -13,20 +13,21 @@ import types
 import nltk
 import re
 from langchain_text_splitters import (RecursiveCharacterTextSplitter, CharacterTextSplitter)
+from openai import OpenAI
 
 #nltk.download('punkt')
 
 logger = logging.getLogger(__name__)
 
-
-
 class VectorStore:
     def __init__(self):
         # Use OpenAI text-embedding-3-small for all embeddings (user docs + cloud data)
         # Vector size: 1536 dimensions
-        self._model_name = "text-embedding-3-small"
-        self._vector_size = 1536
+        self._model_name = "BAAI/bge-base-en-v1.5"
+        self._vector_size = 768
         self._embeddings = None
+        self._openai_api_key = settings.DEEPINFRA_API_KEY
+        self._openai_base_url = settings.DEEPINFRA_API_BASE_URL
         
         # Single Qdrant client (cloud) for both user documents and summaries
         # Configure with increased timeout for operations that may take longer
@@ -88,9 +89,13 @@ class VectorStore:
         if self._embeddings is None:
             try:
                 logger.info(f"Creating OpenAI embeddings with model {self._model_name} ({self._vector_size}D)...")
+                #logger.info(f">>>>>>>>>>>>>_openai_api_key {self._openai_api_key}")
+                #logger.info(f">>>>>>>>>>>>>_openai_base_url {self._openai_base_url}")
+
                 self._embeddings = OpenAIEmbeddings(
                     model=self._model_name,
-                    openai_api_key=settings.OPENAI_API_KEY
+                    openai_api_key=self._openai_api_key,
+                    base_url=self._openai_base_url
                 )
                 logger.info(f"✓ OpenAI embeddings initialized: {self._vector_size}D")
             except Exception as e:
@@ -222,10 +227,10 @@ class VectorStore:
             logger.info(f"Available collections in cloud Qdrant: {collection_names}")
             
             # Use the unified summaries collection
-            collection_name_to_use = "summaries_1_0"
+            collection_name_to_use = "summaries_1_2"
             if collection_name_to_use not in collection_names:
                 logger.warning(
-                    f"❌ summaries_1_0 collection not found in cloud Qdrant. "
+                    f"❌ summaries_1_2 collection not found in cloud Qdrant. "
                     f"Available collections: {collection_names}"
                 )
                 return []
@@ -258,14 +263,25 @@ class VectorStore:
             
             # Generate query embedding using OpenAI text-embedding-3-small
             try:
-                if actual_vector_size == 1536:
+                if actual_vector_size == 768:
                     # Collection uses text-embedding-3-small (3072D)
-                    logger.info("Generating query embedding with text-embedding-3-small (1536D)...")
+                    logger.info("Generating query embedding with BAAI/bge-base-en-v1.5")
                     embeddings = self.embeddings  # OpenAI embeddings
                     if embeddings is None:
                         logger.error("❌ OpenAI embeddings not initialized!")
                         return []
-                    query_vector = embeddings.embed_query(query)
+                    logger.info(f">>>>>>>>>>>>>embed_query {query}")
+
+                    openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
+                    response = openai_client.embeddings.create(
+                        input=query,
+                        model=self._model_name
+                    )
+                    query_vector = response.data[0].embedding
+
+
+                    
+                    #query_vector = embeddings.embed_query(query)
                 elif actual_vector_size == 384:
                     # Legacy: Collection uses 384D vectors (old SentenceTransformer setup)
                     logger.warning("⚠ Collection uses 384D vectors - expected 3072D. Please re-index your collection.")
@@ -538,8 +554,17 @@ class VectorStore:
             logger.debug("✓ Vector generated: " + text)
 
             # Generate unique ID
-            point_id = self.str_to_qdrant_id(metadata["id"])
-            logger.debug("✓ Point ID generated: " + point_id)
+            # If metadata["id"] is already a UUID string, use it directly; otherwise hash it
+            point_id_str = str(metadata["id"])
+            try:
+                # Try to parse as UUID to check if it's already a valid UUID
+                uuid.UUID(point_id_str)
+                # It's a valid UUID, use it directly (Qdrant accepts UUID strings)
+                point_id = point_id_str
+            except (ValueError, AttributeError, TypeError):
+                # Not a UUID, use the hash function to generate a deterministic UUID5
+                point_id = self.str_to_qdrant_id(point_id_str)
+            logger.debug("✓ Point ID generated: " + str(point_id))
             # Upsert point
             self.client.upsert(
                 collection_name=collection_name,

@@ -124,7 +124,7 @@ def clean_comments_json(posts_json):
                     "body": reply_data.get("body"),
                     "author_fullname": reply_data.get("author_fullname"),
                     "date_created_utc": reply_data.get("created_utc"),
-                    "url": "https://www.reddit.com" + reply_data.get("permalink"),
+                    "url": "https://www.reddit.com" + (reply_data.get("permalink") or ""),
                     "ups": reply_data.get("ups"),
                 }
                 clean_replies.append(clean_reply)
@@ -133,7 +133,7 @@ def clean_comments_json(posts_json):
                 "body": thread_data.get("body"),    
                 "author_fullname": thread_data.get("author_fullname"),
                 "date_created_utc": thread_data.get("created_utc"),
-                "url": "https://www.reddit.com" + thread_data.get("permalink"),
+                "url": "https://www.reddit.com" + (thread_data.get("permalink") or ""),
                 "ups": thread_data.get("ups"),
                 "replies": clean_replies
                 }
@@ -149,7 +149,7 @@ def clean_comments_json(posts_json):
                 "subreddit": post_data.get("subreddit"),
                 "flair_text": post_data.get("link_flair_text"),
                 "ups": post_data.get("ups"),
-                "thread_url": "https://www.reddit.com" + post_data.get("permalink"),
+                "thread_url": "https://www.reddit.com" + (post_data.get("permalink") or ""),
                 "score": post_data.get("score"),
                 "threads": threads
         }
@@ -196,7 +196,7 @@ def clean_and_split_comments(posts_json):
                     "body": reply_data.get("body"),
                     "author_fullname": reply_data.get("author_fullname"),
                     "date_created_utc": reply_data.get("created_utc"),
-                    "url": "https://www.reddit.com" + reply_data.get("permalink"),
+                    "url": "https://www.reddit.com" + (reply_data.get("permalink") or ""),
                     "ups": reply_data.get("ups"),
                 }
                 clean_replies.append(clean_reply)
@@ -205,7 +205,7 @@ def clean_and_split_comments(posts_json):
                 "body": thread_data.get("body"),    
                 "author_fullname": thread_data.get("author_fullname"),
                 "date_created_utc": thread_data.get("created_utc"),
-                "url": "https://www.reddit.com" + thread_data.get("permalink"),
+                "url": "https://www.reddit.com" + (thread_data.get("permalink") or ""),
                 "ups": thread_data.get("ups"),
                 "replies": clean_replies
                 }
@@ -221,7 +221,7 @@ def clean_and_split_comments(posts_json):
                 "subreddit": post_data.get("subreddit"),
                 "flair_text": post_data.get("link_flair_text"),
                 "ups": post_data.get("ups"),
-                "thread_url": "https://www.reddit.com" + post_data.get("permalink"),
+                "thread_url": "https://www.reddit.com" + (post_data.get("permalink") or ""),
                 "score": post_data.get("score"),
                 "threads": threads
         }
@@ -255,26 +255,55 @@ def convert_comments_to_detailed(post, prompt):
 
     except Exception as e:
         #logger.error(f"Error processing {post}: {e}")
-        logger.error(f"Error processing {post["id"]}: {e}")
+        logger.error(f"Error processing {post.get('id', 'unknown')}: {e}")
+        return None
 
 def upsert_posts(collection_name: str, posts: List[Dict[str, Any]], text_fields: List[str]):
-
-    points = []
-    text_chunks = []
-
-    for text_field in text_fields:
-        for post in posts:
-            # remove threads array and all children from post
-            post.pop("threads", None)
-            post["doc_type"] = "reddit_post"
-            #check if the text_field is in chunk keys
-            if text_field in post.keys():
-                text_chunks.append(vector_store.chunking(text=post[text_field], model="nltk"))  
-
-            for text_chunk in text_chunks:
-                for item in text_chunk:
-                    print("upserting item:", item)
-                    vector_store.upsert_document(collection_name=collection_name, text=item, metadata=post)
+    """Upsert posts to vector store, creating separate chunks for each text field."""
+    
+    for post in posts:
+        # Skip None posts (from failed processing)
+        if post is None:
+            continue
+            
+        # Remove threads array and all children from post
+        post.pop("threads", None)
+        post["doc_type"] = "reddit_post"
+        
+        # Process each text field separately
+        for text_field in text_fields:
+            # Check if the text_field exists and has content
+            if text_field not in post.keys() or not post[text_field]:
+                continue
+                
+            # Get text content
+            text_content = post[text_field]
+            if not isinstance(text_content, str) or not text_content.strip():
+                continue
+            
+            # Chunk the text
+            text_chunks = vector_store.chunking(text=text_content, model="nltk")
+            
+            # Upsert each chunk with a unique UUID
+            for chunk_idx, chunk_text in enumerate(text_chunks):
+                if not chunk_text or not chunk_text.strip():
+                    continue
+                    
+                # Get original post ID from JSON
+                original_post_id = post.get('id', 'unknown')
+                
+                # Generate unique UUID for this chunk
+                chunk_uuid = str(uuid.uuid4())
+                
+                # Create metadata copy with chunk info
+                chunk_metadata = post.copy()
+                chunk_metadata["chunk_index"] = chunk_idx
+                chunk_metadata["text_field"] = text_field
+                chunk_metadata["post_id"] = original_post_id  # Add post_id for indexing to prevent duplicates
+                chunk_metadata["id"] = chunk_uuid  # Use UUID for Qdrant point ID
+                
+                logger.debug(f"Upserting chunk {chunk_idx} from field '{text_field}' of post {original_post_id} with UUID {chunk_uuid}")
+                vector_store.upsert_document(collection_name=collection_name, text=chunk_text, metadata=chunk_metadata)
 
 
 def process_and_upsert_reddit(
@@ -297,7 +326,10 @@ def process_and_upsert_reddit(
         print(post["id"])
 
         detailed_post = convert_comments_to_detailed(post, DETAILS_EXTRACTION_PROMPT)
-        detailed_posts.append(detailed_post)
+        if detailed_post is not None:
+            detailed_posts.append(detailed_post)
+        else:
+            logger.warning(f"Failed to process post {post.get('id', 'unknown')}, skipping")
         #store detailed json in a S3 bucket
         #s3_client = boto3.client('s3')
         #s3_client.put_object(Bucket='your-bucket-name', Key=f'detailed_posts/{post["id"]}.json', Body=json.dumps(detailed))

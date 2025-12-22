@@ -6,14 +6,16 @@ from qdrant_client import QdrantClient
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Qdrant
 import os
+from dotenv import load_dotenv
 
 print("=" * 60)
 print("Testing Cloud Qdrant Connection")
 print("=" * 60)
 
-# Configuration
-CLOUD_URL = "https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333"
-CLOUD_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.s53XfrTWp0MHokNbtLSx2ikhLdi9Miru2Q99NxACFo8"
+# Initialize clients
+load_dotenv()
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
