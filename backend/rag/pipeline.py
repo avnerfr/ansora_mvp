@@ -79,7 +79,6 @@ conclusion:
     "blog post": """
 - Length: Short-form thought leadership (400-600 words max)
 - Audience: Senior practitioners (Security, IAM, Platform, DevSecOps)
-- Tone: Educational, opinionated, practitioner-level. No marketing language.
 
 STRUCTURE:
 1. INTRO (max 2 sentences)
@@ -107,20 +106,6 @@ STRUCTURE:
 }
 
 
-tone_rules = {
-    "manager": """
-- Professional, sharp, technical.
-- Max 18 words per sentence.
-- Direct practitioner language: rule bloat, CAB fatigue, shadow rules, hybrid inconsistencies, outage fear.
-- No hype. No marketing fluff.
-""",
-    "technical": """
-- Clipped, urgent, engineer-to-engineer.
-- Max 12 words per sentence.
-- Stripped of politeness. Only risk, clarity, pain, consequence.
-- Use INSIGHTS aggressively.
-""",
-}
 
 
 
@@ -591,7 +576,6 @@ def build_final_prompt(
     backgrounds_str: str,
     marketing_text: str,
     vector_search_context: str,
-    tone: str | None,
     asset_type: str | None,
     icp: str | None
 ) -> str:
@@ -603,7 +587,6 @@ def build_final_prompt(
         backgrounds_str: Comma-separated backgrounds
         marketing_text: User's marketing text
         vector_search_context: JSON context from retrieved docs
-        tone: Selected tone
         asset_type: Selected asset type
         icp: Ideal customer profile
 
@@ -612,8 +595,7 @@ def build_final_prompt(
     """
     logger.info("Building final prompt...")
 
-    # Expand structured rule blocks from tone/asset type dictionaries
-    tone_instructions = tone_rules.get(tone, tone or "") if tone else ""
+    # Expand structured rule blocks from asset type dictionaries
     asset_type_instructions = asset_type_rules.get(asset_type, asset_type or "") if asset_type else ""
 
     prompt = template
@@ -623,9 +605,6 @@ def build_final_prompt(
     prompt = prompt.replace('{{context}}', marketing_text)
     prompt = prompt.replace('{{user_provided_text}}', marketing_text)
     prompt = prompt.replace('{{vector_search_context}}', vector_search_context)
-    prompt = prompt.replace('{{tone}}', tone or '')
-    prompt = prompt.replace('{{tone_instructions}}', tone_instructions)
-    prompt = prompt.replace('{{tone_rules[tone]}}', tone_instructions)
     prompt = prompt.replace('{{asset_type}}', asset_type or '')
     prompt = prompt.replace('{{asset_type_instructions}}', asset_type_instructions)
     prompt = prompt.replace('{{asset_type_rules[asset_type]}}', asset_type_instructions)
@@ -695,7 +674,6 @@ async def process_rag(
     user_id: int,
     backgrounds: List[str],
     marketing_text: str,
-    tone: str | None = None,
     asset_type: str | None = None,
     icp: str | None = None,
     template: str | None = None,
@@ -711,7 +689,7 @@ async def process_rag(
     logger.info(f"Backgrounds / use cases: {backgrounds}")
     logger.info(f"Context text length: {len(marketing_text)} chars")
     logger.info(f"Context text preview: {marketing_text[:100]}...")
-    logger.info(f"Tone: {tone}, Asset Type: {asset_type}, ICP: {icp}")
+    logger.info(f"Asset Type: {asset_type}, ICP: {icp}")
     logger.info(f"Full context text: {marketing_text}")
     logger.debug(f"Template: {template}")
     
@@ -739,7 +717,6 @@ async def process_rag(
         backgrounds_str=backgrounds_str,
         marketing_text=marketing_text,
         vector_search_context=vector_search_context,
-        tone=tone,
         asset_type=asset_type,
         icp=icp
     )

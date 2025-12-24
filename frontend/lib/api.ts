@@ -83,7 +83,6 @@ export const ragAPI = {
     backgrounds: string[],
     marketingText: string,
     options?: {
-      tone?: string
       assetType?: string
       icp?: string
       templateOverride?: string
@@ -92,7 +91,6 @@ export const ragAPI = {
     const response = await apiClient.post('/rag/process', {
       backgrounds,
       marketing_text: marketingText,
-      tone: options?.tone,
       asset_type: options?.assetType,
       icp: options?.icp,
       template_override: options?.templateOverride,

@@ -11,11 +11,12 @@ import { ragAPI } from '@/lib/api'
 import { isAuthenticated } from '@/lib/auth'
 
 const USE_CASE_OPTIONS = [
-  'cybersecurity',
-  'network security',
-  'sysadmin',
-  'Fortinet',
-  'Cisco',
+  'Change & Risk Management',
+  'Policy Sprawl & Ownership',
+  'Visibility & Validation',
+  'Hybrid & Cloud Complexity',
+  'Operational Efficiency',
+
 ]
 
 export default function HomePage() {
@@ -25,7 +26,6 @@ export default function HomePage() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
   const [hasToken, setHasToken] = useState(false)
-  const [tone, setTone] = useState<string>('')
   const [assetType, setAssetType] = useState<string>('')
   const [icp, setIcp] = useState<string>('')
   const [isUploadingContextDocs, setIsUploadingContextDocs] = useState(false)
@@ -76,11 +76,6 @@ export default function HomePage() {
 
   const handleProcess = async () => {
     // Validation
-    if (!tone) {
-      alert('Please select a tone')
-      return
-    }
-
     if (!assetType.trim()) {
       alert('Please select or enter an asset type')
       return
@@ -88,11 +83,6 @@ export default function HomePage() {
 
     if (!icp.trim()) {
       alert('Please select or enter an ICP')
-      return
-    }
-
-    if (selectedUseCases.length === 0) {
-      alert('Please select or enter at least one use case')
       return
     }
 
@@ -105,10 +95,9 @@ export default function HomePage() {
 
     try {
       const response = await ragAPI.process(
-        selectedUseCases,
+        selectedUseCases.length > 0 ? selectedUseCases : [""],
         contextText,
         {
-          tone,
           assetType,
           icp,
         }
@@ -152,35 +141,41 @@ export default function HomePage() {
           </div>
 
           {/* Section 1: Context */}
-          <div className="grid grid-cols-1 gap-6">
-            <section className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <section className="bg-white rounded-lg shadow p-4 flex flex-col h-full">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">
                 1. Context
               </h2>
-              <TextArea
-                label="Context"
-                rows={10}
-                value={contextText}
-                onChange={(e) => setContextText(e.target.value)}
-                placeholder="Describe the situation, pain points, or raw notes you want to turn into a marketing asset..."
-              />
+              <div className="flex-1 flex flex-col">
+                <TextArea
+                  label="Context"
+                  rows={6}
+                  value={contextText}
+                  onChange={(e) => setContextText(e.target.value)}
+                  placeholder="Describe the situation, pain points, or raw notes you want to turn into a marketing asset..."
+                />
+              </div>
+            </section>
 
-              <div className="mt-4 space-y-2">
-                <p className="text-sm font-medium text-gray-700">
-                  Attach context documents (optional)
-                </p>
+            <section className="bg-white rounded-lg shadow p-4 flex flex-col h-full">
+              <h2 className="text-lg font-semibold text-gray-900 mb-3">
+                Attach Context
+              </h2>
+              <div className="space-y-2 flex-1 flex flex-col">
                 <p className="text-xs text-gray-500">
                   Upload .txt, .docx, or .pdf files and we&apos;ll append their text
                   after your context.
                 </p>
-                <FileDropzone
-                  onFilesSelected={handleContextFilesSelected}
-                  acceptedTypes={[
-                    'text/plain',
-                    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    'application/pdf',
-                  ]}
-                />
+                <div className="flex-1">
+                  <FileDropzone
+                    onFilesSelected={handleContextFilesSelected}
+                    acceptedTypes={[
+                      'text/plain',
+                      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                      'application/pdf',
+                    ]}
+                  />
+                </div>
                 {isUploadingContextDocs && (
                   <p className="text-xs text-gray-500 mt-1">
                     Uploading and extracting text from your documents...
@@ -190,32 +185,12 @@ export default function HomePage() {
             </section>
           </div>
 
-          {/* Section 2: Tone, Asset Type, ICP */}
+          {/* Section 2: Asset Type, ICP */}
           <section className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
               2. Generation Settings
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Tone */}
-              <div>
-                <label
-                  htmlFor="tone"
-                  className="block text-sm font-medium text-gray-700 mb-1"
-                >
-                  Tone
-                </label>
-                <select
-                  id="tone"
-                  value={tone}
-                  onChange={(e) => setTone(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
-                >
-                  <option value="">Select tone...</option>
-                  <option value="manager">Manager</option>
-                  <option value="technical">Technical</option>
-                </select>
-              </div>
-
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Asset Type */}
               <div>
                 <label

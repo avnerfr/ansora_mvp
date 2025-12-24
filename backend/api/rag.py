@@ -179,7 +179,7 @@ async def process_marketing_material(
     logger.info(
         f"Request validated - Backgrounds: {request.backgrounds}, "
         f"Text length: {len(request.marketing_text)}, "
-        f"Tone: {request.tone}, Asset Type: {request.asset_type}, ICP: {request.icp}"
+        f"Asset Type: {request.asset_type}, ICP: {request.icp}"
     )
     
     # Get user's template or use override
@@ -198,7 +198,6 @@ async def process_marketing_material(
             user_id=current_user.id,
             backgrounds=request.backgrounds,
             marketing_text=request.marketing_text,
-            tone=request.tone,
             asset_type=request.asset_type,
             icp=request.icp,
             template=template,

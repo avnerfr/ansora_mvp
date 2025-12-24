@@ -89,7 +89,7 @@ export default function PromptTemplatePage() {
             </h1>
             <p className="mt-2 text-gray-600">
               Customize the prompt template used for generating marketing assets.
-              Use placeholders: {`{{backgrounds}} / {{use_cases}}, {{marketing_text}} / {{context}}, {{vector_search_context}}, {{tone}}, {{tone_instructions}}, {{asset_type}}, {{asset_type_instructions}}, {{icp}}, {{user_provided_text}}`}
+              Use placeholders: {`{{backgrounds}} / {{use_cases}}, {{marketing_text}} / {{context}}, {{vector_search_context}}, {{asset_type}}, {{asset_type_instructions}}, {{icp}}, {{user_provided_text}}`}
             </p>
           </div>
 

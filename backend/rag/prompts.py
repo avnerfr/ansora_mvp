@@ -91,8 +91,6 @@ ICP_ROLE:
 PRIMARY_TOPIC:
 {{marketing_text}}
 
-Use the following tone and style guidelines:
-{{tone_instructions}}
 
 INSIGHTS_JSON (FROM RAG — MANDATORY):
 {{vector_search_context}}
@@ -234,9 +232,6 @@ CONTENT GUARDRAILS (MANDATORY)
 
 ------------------------------------------------------
 INPUTS
-
-Use the following tone and style guidelines:
-{{tone_rules[tone]}}
 
 The user provided the following original text:
 {{user_provided_text}}
