@@ -207,7 +207,14 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
         if isinstance(doc, dict):
             # For our source objects, use the dict as metadata and extract content
             metadata = doc.copy()
-            content = doc.get("snippet", doc.get("citation", doc.get("title", "No content")))
+            # If text field already exists (from retrieve_documents context_excerpt), use it directly
+            # Otherwise, use snippet or other fields
+            if "text" in doc and doc.get("text"):
+                content = doc.get("text")
+                display_text = content
+            else:
+                content = doc.get("snippet", doc.get("citation", doc.get("title", "No content")))
+                display_text = content
         else:
             # Handle LangChain Document objects
             metadata = doc.metadata if hasattr(doc, 'metadata') else {}
@@ -231,16 +238,22 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
         except Exception:
             is_reddit = False
 
-        discussion_desc = metadata.get("discussion_description")
-        detailed_expl = (
-            discussion_desc
-            or metadata.get("detailed-explanation")
-            or metadata.get("detailed_explanation")
-            or metadata.get("detailed_description")
-        )
-        display_text = (
-            _safe_str(detailed_expl) if is_reddit and _safe_str(detailed_expl) else content
-        )
+        # Initialize these variables for both dict and non-dict paths
+        discussion_desc = None
+        detailed_expl = None
+        
+        # Only apply Reddit-specific logic if not already processed (external_docs already have formatted text)
+        if not isinstance(doc, dict):
+            discussion_desc = metadata.get("discussion_description")
+            detailed_expl = (
+                discussion_desc
+                or metadata.get("detailed-explanation")
+                or metadata.get("detailed_explanation")
+                or metadata.get("detailed_description")
+            )
+            display_text = (
+                _safe_str(detailed_expl) if is_reddit and _safe_str(detailed_expl) else content
+            )
         
         # Build source object with all available fields
         # Prepare filename
@@ -274,7 +287,7 @@ def format_sources(docs: List[Any]) -> List[Dict[str, Any]]:
             # Podcast-specific fields
             "episode_url": _safe_str(metadata.get("episode_url")),
             "episode_number": _safe_int(metadata.get("episode_number")),
-            "mp3_url": _safe_str(metadata.get("mp3_url")),
+            "mp3_url": _safe_str(metadata.get("mp3_url") or metadata.get("mp3_link")),
             
             # Reddit-specific fields (new structure)
             "selftext": _safe_str(metadata.get("selftext")),
@@ -434,7 +447,7 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
 
         reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "url",10)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
-        podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "url",3)    #extract a vector of json from the podcast_docs
+        podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
 
 
         combined_docs = reddit_filtered_docs + youtube_filtered_docs + podcast_filtered_docs
@@ -457,19 +470,33 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
                 video_url = doc_url  # For frontend compatibility
             elif doc_type == "podcast_summary":
                 source = "podcast"
-                url = doc_url
-                episode_url = doc_url  # For frontend compatibility
+                # Podcasts use episode_url, not url
+                episode_url = doc.metadata.get('episode_url', '')
+                url = episode_url  # Use episode_url as the main url
             else:
                 source = "unknown"
                 url = doc_url
             title = doc.metadata.get('title', '')
             score = doc.metadata.get('score', 0)
             citation = doc.metadata.get('citation', '')
-            key_issues = doc.metadata.get('key_issues', '')
-            pain_phrases = doc.metadata.get('pain_phrases', '')
-            emotional_triggers = doc.metadata.get('emotional_triggers', '')
-            buyer_language = doc.metadata.get('buyer_language', '')
-            implicit_risks = doc.metadata.get('implicit_risks', '')
+            citation_start_time = doc.metadata.get('citation_start_time')
+            mp3_url = doc.metadata.get('mp3_url') or doc.metadata.get('mp3_link')
+            # Ensure these fields are always lists/arrays, not strings
+            key_issues = doc.metadata.get('key_issues', [])
+            if not isinstance(key_issues, list):
+                key_issues = [key_issues] if key_issues and str(key_issues).strip() else []
+            pain_phrases = doc.metadata.get('pain_phrases', [])
+            if not isinstance(pain_phrases, list):
+                pain_phrases = [pain_phrases] if pain_phrases and str(pain_phrases).strip() else []
+            emotional_triggers = doc.metadata.get('emotional_triggers', [])
+            if not isinstance(emotional_triggers, list):
+                emotional_triggers = [emotional_triggers] if emotional_triggers and str(emotional_triggers).strip() else []
+            buyer_language = doc.metadata.get('buyer_language', [])
+            if not isinstance(buyer_language, list):
+                buyer_language = [buyer_language] if buyer_language and str(buyer_language).strip() else []
+            implicit_risks = doc.metadata.get('implicit_risks', [])
+            if not isinstance(implicit_risks, list):
+                implicit_risks = [implicit_risks] if implicit_risks and str(implicit_risks).strip() else []
             # Create comprehensive context excerpt from RAG metadata
             context_parts = []
             if key_issues and (isinstance(key_issues, list) and key_issues or str(key_issues).strip()):
@@ -489,6 +516,7 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
             source_obj = {
                 "filename": title ,
                 "snippet": context_excerpt,
+                "text": context_excerpt,  # Set text field to context_excerpt so frontend can parse it consistently
                 "score": score,
                 "source": source,
                 "doc_type": doc_type,
@@ -507,8 +535,11 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
                 source_obj["thread_url"] = thread_url
             elif doc_type == "youtube_summary":
                 source_obj["video_url"] = video_url
+                source_obj["citation_start_time"] = citation_start_time
             elif doc_type == "podcast_summary":
                 source_obj["episode_url"] = episode_url
+                source_obj["citation_start_time"] = citation_start_time
+                source_obj["mp3_url"] = _safe_str(mp3_url)
             external_docs.append(source_obj)
             #logger.info(f"Reddit filtered docs JSON: {reddit_filtered_docs_json_text}")
 

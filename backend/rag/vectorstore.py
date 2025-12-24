@@ -418,6 +418,11 @@ class VectorStore:
                 'title': point.payload.get("title"),
                 'channel': point.payload.get("channel"),
                 'type': point.payload.get("type"),
+                'key_issues': point.payload.get("key_issues"),
+                'pain_phrases': point.payload.get("pain_phrases"),
+                'emotional_triggers': point.payload.get("emotional_triggers"),
+                'implicit_risks': point.payload.get("implicit_risks"),
+                'buyer_language': point.payload.get("buyer_language"),
 
                 # YouTube-specific fields
                 'url': point.payload.get("video_url"),
@@ -433,7 +438,7 @@ class VectorStore:
             metadata["filename"] = filename
 
             # Log what we extracted
-            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}")
+            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}, {point.payload.get('key_issues')}, {point.payload.get('pain_phrases')}, {point.payload.get('emotional_triggers')}, {point.payload.get('implicit_risks')}, {point.payload.get('buyer_language')}")
             
             # Create Document
             doc = Document(
@@ -475,11 +480,15 @@ class VectorStore:
                 'title': point.payload.get("title"),
                 'channel': point.payload.get("channel"),
                 'type': point.payload.get("type"),
-
+                'key_issues': point.payload.get("key_issues"),
+                'pain_phrases': point.payload.get("pain_phrases"),
+                'emotional_triggers': point.payload.get("emotional_triggers"),
+                'implicit_risks': point.payload.get("implicit_risks"),
+                'buyer_language': point.payload.get("buyer_language"),
                 # Podcast-specific fields
                 'episode_url': point.payload.get("episode_url"),
                 'episode_number': point.payload.get("episode_number"),
-                'mp3_url': point.payload.get("mp3_url"),
+                'mp3_url': point.payload.get("mp3_url") or point.payload.get("mp3_link"),
 
                 'detailed_description': point.payload.get("detailed_description"),
 
@@ -491,7 +500,7 @@ class VectorStore:
             metadata["filename"] = filename
 
             # Log what we extracted
-            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}")
+            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}, {point.payload.get('key_issues')}, {point.payload.get('pain_phrases')}, {point.payload.get('emotional_triggers')}, {point.payload.get('implicit_risks')}, {point.payload.get('buyer_language')}")
             
             # Create Document
             doc = Document(
