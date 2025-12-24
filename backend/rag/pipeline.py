@@ -21,37 +21,39 @@ logging.basicConfig(
 asset_type_rules = {
 "email": """
 subject:
-1 short, sharp line focused on a real operational problem or curiosity.
+1  short, sharp line focused on a technical gap or risk mentioned in the JSON.
 
 opening:
 2 sentences max.
-- sentence 1: context that mirrors their day-to-day reality
-- sentence 2: a specific operational pain surfaced in the insights
+- sentence 1: context that mirrors the daily reality found in the insights
+- sentence 2: Use the most visceral pain phrase from the JSON to describe the situation
 
 body:
 3 natural bullets (no labels).
-- bullet 1: describe the pain in practitioner language
-- bullet 2: explain why it keeps happening operationally
-- bullet 3: how the situation changes when visibility or impact clarity exists
+- bullet 1: Use the "Whether/Or" rule to link two different technical key_issues from the JSON. Contrast them with the specific "pain\_phrase" found in the data.
+- bullet 2: Describe the operational failure or systemic consequence exactly as it is described in the insights.
+- bullet 3: Explain the specific shift in reality (the "outcome") that occurs when the policy logic is resolved, using the "buyer\_language" from the JSON.
+
 
 cta:
-1 short, friendly sentence offering a quick chat or resource.
+1 short, friendly sentence offering a quick chat.
 """,
 "one-pager": """
 headline:
-1 line describing the operational problem.
+1 line describing the operational problem surfaced in the JSON.
 
 problem:
-2–3 sentences grounded in the insights.
+2-3 sentences grounded in the insights, describing the current "mess".
 
-why_it_persists:
-2–3 sentences explaining systemic causes.
+why it persists:
+2-3 sentences using the "Whether/Or" rule to link technical specifics to systemic risk.
 
-operational_shift:
-2–3 sentences describing what changes with visibility and impact awareness.
+operational shift:
+2-3 sentences describing what changes with end-to-end visibility.
+
 """,
 "landing page": """
-headline: 1 line, sharp, focused on the core value
+headline: 1 line, sharp, focused on the core struggle from the insights.
 subhead: 1 line, clarifying what pain it solves or what outcome it unlocks
 """,
     # Support both "blog" (UI) and "blog post" (notebook wording)
@@ -60,16 +62,16 @@ intro:
 Maximum 2 sentences framing a real operational failure or misconception.
 
 section 1:
-One-line subhead.
-2-3 sentences describing the operational problem.
+One-line subhead stating a clear insight.
+2-3 sentences describing the technical problem using practitioner language from the data.
 
 section 2:
 One-line subhead.
-2-3 sentences explaining why teams get stuck or repeat the mistake.
+2-3 sentences using the "Whether/Or" rule to link technical specifics to systemic risk.
 
 section 3:
 One-line subhead.
-2-3 sentences describing what changes when assumptions are validated.
+2-3 sentences describing the specific "before vs after" shift found in the JSON's buyer_language.
 
 conclusion:
 1 sentence tying the issue back to operational clarity.
@@ -97,10 +99,10 @@ STRUCTURE:
    - Do NOT pitch a product.
 
 ""","linkedin post": """
-1 short hook sentence (provocative but technical).
-1–2 sentences describing the operational reality.
-1 sentence highlighting the hidden risk or blind spot.
-1 sentence pointing to what teams should question or re-examine.
+1 short hook sentence based on the data..
+1-2 sentences describing the "Whether/Or" struggle using specific technical insights.
+1 sentence highlighting the hidden risk or blind spot found in the insight.
+1 sentence on why the current state is unsustainable based on the pain_phrases.
 """,
 }
 

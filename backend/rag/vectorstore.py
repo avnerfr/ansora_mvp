@@ -15,7 +15,7 @@ import re
 from langchain_text_splitters import (RecursiveCharacterTextSplitter, CharacterTextSplitter)
 from openai import OpenAI
 
-#nltk.download('punkt')
+nltk.download('punkt')
 
 logger = logging.getLogger(__name__)
 
@@ -307,26 +307,14 @@ class VectorStore:
                 return []
             
             # Search using direct Qdrant client API
-            logger.info(f"Performing similarity search with k={k}...")
+            logger.info(f"Performing similarity search with k={k} ")
             search_results = self.client.query_points(
                 collection_name=collection_name_to_use,
                 query=query_vector,
                 limit=k,
                 with_payload=True,
                 with_vectors=False,
-                #prefetch=[
-                #    Prefetch(
-                #        filter=Filter(
-                #            must=[
-                #                FieldCondition(
-                #                    key="doc_type",
-                #                    match=MatchValue(value=doc_type)
-                #                )
-                #            ]
-                #        ),
-                #        limit=50
-                #    )
-                #],
+
                 query_filter=Filter(
                     must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type))]
                 ),

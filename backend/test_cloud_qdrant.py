@@ -12,8 +12,11 @@ print("=" * 60)
 print("Testing Cloud Qdrant Connection")
 print("=" * 60)
 
-# Initialize clients
-load_dotenv()
+# Initialize clients - load from root .env file
+from pathlib import Path
+project_root = Path(__file__).parent.parent.parent
+env_path = project_root / ".env"
+load_dotenv(dotenv_path=env_path)
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

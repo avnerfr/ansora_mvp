@@ -1,9 +1,12 @@
 from importlib import import_module
 from dotenv import load_dotenv
 import os
+from pathlib import Path
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from .env file in backend directory
+backend_dir = Path(__file__).parent
+env_path = backend_dir / ".env"
+load_dotenv(dotenv_path=env_path)
 
 from core.config import settings  # adjust import if your path is different
 

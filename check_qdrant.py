@@ -18,8 +18,11 @@ except Exception as e:
 
 print()
 from dotenv import load_dotenv
-# Initialize clients
-load_dotenv()
+from pathlib import Path
+# Initialize clients - load from root .env file
+project_root = Path(__file__).parent.parent
+env_path = project_root / ".env"
+load_dotenv(dotenv_path=env_path)
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 

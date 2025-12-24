@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
@@ -11,6 +14,11 @@ import json
 import logging
 import httpx
 import os
+
+project_root = Path(__file__).parent.parent.parent
+env_path = project_root / ".env"
+load_dotenv(dotenv_path=env_path)
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,6 +34,7 @@ async def health_check():
         "qdrant_api_key_set": bool(settings.QDRANT_API_KEY),
         "error": None
     }
+    logger.info(f"QDRANT_API_KEY: {settings.QDRANT_API_KEY}")
     
     try:
         # Try to get collections as a connectivity test
@@ -53,7 +62,12 @@ async def get_collections(current_user: User = Depends(require_admin)):
     try:
         from core.config import settings
         logger.info(f"Attempting to connect to Qdrant at {settings.QDRANT_URL}")
-        logger.info(f"QDRANT_API_KEY is {'set' if settings.QDRANT_API_KEY else 'NOT set'}")
+        if settings.QDRANT_API_KEY:
+            masked_key = f"{settings.QDRANT_API_KEY[:8]}...{settings.QDRANT_API_KEY[-4:]}" if len(settings.QDRANT_API_KEY) > 12 else "***"
+            logger.info(f"QDRANT_API_KEY is set: {masked_key} (length: {len(settings.QDRANT_API_KEY)})")
+        else:
+            logger.warning("QDRANT_API_KEY is NOT set in settings")
+        logger.info(f"Vector store client URL: {vector_store.client._url if hasattr(vector_store.client, '_url') else 'N/A'}")
         collections_response = vector_store.client.get_collections()
         collection_names = [c.name for c in collections_response.collections]
         logger.info(f"Retrieved {len(collection_names)} collections")
