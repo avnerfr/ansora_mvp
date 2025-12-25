@@ -699,7 +699,6 @@ async def process_rag(
         logger.info("Using default template")
     else:
         logger.info("Using custom/override template")
-    template = DEFAULT_TEMPLATE
     
     # Step 1: Build optimized retrieval query
     retrieval_query = await build_retrieval_query(marketing_text, backgrounds)

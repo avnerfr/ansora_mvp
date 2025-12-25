@@ -11,17 +11,18 @@ import { ragAPI } from '@/lib/api'
 import { isAuthenticated } from '@/lib/auth'
 
 const USE_CASE_OPTIONS = [
-  'Change & Risk Management',
-  'Policy Sprawl & Ownership',
-  'Visibility & Validation',
-  'Hybrid & Cloud Complexity',
-  'Operational Efficiency',
-
+  'Afraid to push a network change without knowing what will break',
+  'Security changes get stuck in CAB because no one can prove safety',
+  'Cannot verify that network policies actually work as intended',
+  'Rules accumulated over time that nobody understands or owns',
+  'Afraid to remove access because the real dependencies are unknown',
+  'Cloud and on-prem environments behave differently under the same policy',
+  'Audits fail because policy intent cannot be proven',
 ]
 
 export default function HomePage() {
   const router = useRouter()
-  const [selectedUseCases, setSelectedUseCases] = useState<string[]>([])
+  const [selectedOperationalPain, setSelectedOperationalPain] = useState<string>('')
   const [contextText, setContextText] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
@@ -95,7 +96,7 @@ export default function HomePage() {
 
     try {
       const response = await ragAPI.process(
-        selectedUseCases.length > 0 ? selectedUseCases : [""],
+        selectedOperationalPain ? [selectedOperationalPain] : [""],
         contextText,
         {
           assetType,
@@ -135,7 +136,7 @@ export default function HomePage() {
               Refine Your Marketing Materials
             </h1>
             <p className="mt-2 text-gray-600">
-              Provide your context, select or enter use cases, and let AI generate
+              Provide your context, select operational pain points, and let AI generate
               a tailored marketing asset.
             </p>
           </div>
@@ -199,20 +200,18 @@ export default function HomePage() {
                 >
                   Asset Type
                 </label>
-                <input
+                <select
                   id="assetType"
-                  list="asset-type-options"
                   value={assetType}
                   onChange={(e) => setAssetType(e.target.value)}
-                  placeholder="Select or type asset type..."
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
-                />
-                <datalist id="asset-type-options">
-                  <option value="one-pager" />
-                  <option value="email" />
-                  <option value="landing page" />
-                  <option value="blog" />
-                </datalist>
+                >
+                  <option value="">Select asset type...</option>
+                  <option value="one-pager">one-pager</option>
+                  <option value="email">email</option>
+                  <option value="landing page">landing page</option>
+                  <option value="blog">blog</option>
+                </select>
               </div>
 
               {/* ICP */}
@@ -223,52 +222,43 @@ export default function HomePage() {
                 >
                   ICP / Role
                 </label>
-                <input
+                <select
                   id="icp"
-                  list="icp-options"
                   value={icp}
                   onChange={(e) => setIcp(e.target.value)}
-                  placeholder="Select or type ICP..."
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
-                />
-                <datalist id="icp-options">
-                  <option value="Network & Security Operations" />
-                  <option value="Application & Service Delivery" />
-                  <option value="CIO" />
-                  <option value="CISO" />
-                  <option value="Risk and Complience" />
-                </datalist>
+                >
+                  <option value="">Select ICP...</option>
+                  <option value="Network & Security Operations">Network & Security Operations</option>
+                  <option value="Application & Service Delivery">Application & Service Delivery</option>
+                  <option value="CIO">CIO</option>
+                  <option value="CISO">CISO</option>
+                  <option value="Risk and Complience">Risk and Complience</option>
+                </select>
               </div>
             </div>
           </section>
 
-          {/* Section 3: Use Cases (Multi-select with custom input) */}
+          {/* Section 3: Operational Pain */}
           <section className="bg-white rounded-lg shadow p-6">
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
-              3. Use Cases
+              3. Operational Pain
             </h2>
             <p className="text-sm text-gray-600 mb-3">
-              Add the specific use cases, scenarios, or problems this asset should speak to.
+              Select the specific operational pain point this asset should speak to.
             </p>
-            <input
-              list="use-case-options"
-              value={selectedUseCases.join(', ')}
-              onChange={(e) =>
-                setSelectedUseCases(
-                  e.target.value
-                    .split(',')
-                    .map((item) => item.trim())
-                    .filter(Boolean)
-                )
-              }
-              placeholder="Select or type use cases (comma-separated)..."
+            <select
+              value={selectedOperationalPain}
+              onChange={(e) => setSelectedOperationalPain(e.target.value)}
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 text-sm"
-            />
-            <datalist id="use-case-options">
+            >
+              <option value="">Select operational pain...</option>
               {USE_CASE_OPTIONS.map((option) => (
-                <option key={option} value={option} />
+                <option key={option} value={option}>
+                  {option}
+                </option>
               ))}
-            </datalist>
+            </select>
           </section>
 
           {/* Section 4: Process Button */}
