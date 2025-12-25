@@ -169,13 +169,6 @@ async def process_marketing_material(
             detail="At least one background must be selected"
         )
     
-    if not request.marketing_text or not request.marketing_text.strip():
-        logger.warning("Validation error: Empty marketing text")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Marketing text cannot be empty"
-        )
-    
     logger.info(
         f"Request validated - Backgrounds: {request.backgrounds}, "
         f"Text length: {len(request.marketing_text)}, "
