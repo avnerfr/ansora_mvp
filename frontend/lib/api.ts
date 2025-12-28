@@ -117,6 +117,10 @@ export const ragAPI = {
     const response = await apiClient.get('/rag/prompt-template')
     return response.data
   },
+  getDefaultPromptTemplate: async () => {
+    const response = await apiClient.get('/rag/prompt-template/default')
+    return response.data
+  },
   savePromptTemplate: async (template: string) => {
     const response = await apiClient.post('/rag/prompt-template', {
       template,

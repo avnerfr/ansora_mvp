@@ -62,6 +62,14 @@ async def get_prompt_template(
         return PromptTemplateResponse(template=DEFAULT_TEMPLATE)
 
 
+@router.get("/prompt-template/default", response_model=PromptTemplateResponse)
+async def get_default_prompt_template(
+    current_user: User = Depends(get_current_user),
+):
+    """Get the default prompt template from prompts.py."""
+    return PromptTemplateResponse(template=DEFAULT_TEMPLATE)
+
+
 def _guess_file_type(filename: str) -> str:
     """Lightweight MIME type detection based on file extension."""
     ext = filename.lower().split('.')[-1]

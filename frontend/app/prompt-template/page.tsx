@@ -58,9 +58,17 @@ export default function PromptTemplatePage() {
     saveMutation.mutate(template)
   }
 
-  const handleReset = () => {
-    if (templateData?.template) {
-      setTemplate(templateData.template)
+  const handleReset = async () => {
+    try {
+      const defaultTemplate = await ragAPI.getDefaultPromptTemplate()
+      if (defaultTemplate?.template) {
+        setTemplate(defaultTemplate.template)
+      }
+    } catch (error: any) {
+      alert(
+        error.response?.data?.detail ||
+          'Failed to load default template. Please try again.'
+      )
     }
   }
 

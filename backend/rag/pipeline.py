@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import re
 import json
-
+import tiktoken
 
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
 # Configure logging
@@ -20,23 +20,26 @@ logging.basicConfig(
 
 asset_type_rules = {
 "email": """
-subject:
-1  short, sharp line focused on a technical gap or risk mentioned in the JSON.
+Theme: Identify a broad operational struggle from INSIGHTS_JSON.
 
-opening:
-2 sentences max.
-- sentence 1: context that mirrors the daily reality found in the insights
-- sentence 2: Use the most visceral pain phrase from the JSON to describe the situation
+Subject (1 line, ≤10 words): Focus on a technical gap or operational pain.
 
-body:
-3 natural bullets (no labels).
-- bullet 1: Use the "Whether/Or" rule to link two different technical key_issues from the JSON. Contrast them with the specific "pain\_phrase" found in the data.
-- bullet 2: Describe the operational failure or systemic consequence exactly as it is described in the insights.
-- bullet 3: Explain the specific shift in reality (the "outcome") that occurs when the policy logic is resolved, using the "buyer\_language" from the JSON.
+Opening (Hook, 2 sentences max):
+Start with a visceral observation about the gap between theory and messy operational reality.
+Embed 1-2 pain_phrases naturally.
+Keep it short and punchy; do not pre-solve.
+Max 15 words per sentence.
+
+Body (Exactly 3 bullets, natural prose):
+Bullet 1 - Whether/Or framework: Connect 2-3 key_issues. Use pain_phrases naturally. Keep ≤15 words per sentence.
+Bullet 2 - Operational friction: Describe systemic consequence in buyer_language. Show frustration, inefficiency, or blind spots.
+Bullet 3 - AlgoSec Logic Map: Show operational clarity or improvement. Keep peer-to-peer tone, neutral, no marketing language.
+
+CTA (1 sentence, ≤15 words):
+Short, operational, friendly, neutral.
+Example: “Let’s have a quick chat to navigate this policy maze.”
 
 
-cta:
-1 short, friendly sentence offering a quick chat.
 """,
 "one-pager": """
 headline:
@@ -130,6 +133,9 @@ STRUCTURE:
 #"""
 
 
+def count_tokens(text: str, model: str = "gpt-4o-mini") -> int:
+    enc = tiktoken.encoding_for_model(model)
+    return len(enc.encode(text))
 
 
 def _convert_timestamp(value):
@@ -382,9 +388,15 @@ async def build_retrieval_query(
 
     retrieval_query = marketing_text
     try:
+        #retrieval_llm = ChatOpenAI(
+        #    model_name="gpt-4o", #"gpt-5",
+        #    openai_api_key=settings.OPENAI_API_KEY,
+        #    temperature=1.0,
+        #)
         retrieval_llm = ChatOpenAI(
-            model_name="gpt-4o", #"gpt-5",
-            openai_api_key=settings.OPENAI_API_KEY,
+            model_name="deepseek-ai/DeepSeek-V3.2", #"gpt-5",
+            openai_api_key=settings.DEEPINFRA_API_KEY,
+            base_url=settings.DEEPINFRA_API_BASE_URL,
             temperature=1.0,
         )
         rq_messages = [HumanMessage(content=retrieval_prompt)]
@@ -415,6 +427,7 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
     """
     logger.info("Retrieving relevant documents from vector store...")
     external_docs: list[Any] = []
+    combined_docs: list[Any] = []
 
     # External vector search (e.g., YouTube/Reddit/Podcasts)
     try:
@@ -422,7 +435,10 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
         reddit_docs = []
         youtube_docs = []
         podcast_docs = []
-        retrieval_query_chunks = vector_store.chunking(retrieval_query)
+        if(count_tokens(retrieval_query) > 100):
+            retrieval_query_chunks = vector_store.chunking(retrieval_query)
+        else:
+            retrieval_query_chunks = [retrieval_query]
 
         for chunk in retrieval_query_chunks:
             logger.info(f"Searching for chunk: {chunk} in reddit posts, youtube videos, and podcasts")
@@ -532,6 +548,7 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
     except Exception as e:
         logger.warning(f"⚠ Error retrieving external reference documents: {type(e).__name__}: {str(e)}")
         external_docs = []
+        combined_docs = []
 
     return external_docs, combined_docs
 
@@ -642,9 +659,15 @@ async def generate_llm_response(prompt: str) -> str:
     logger.info("Initializing LLM (GPT-4o)...")
     # See note above on temperature: we set temperature=1.0 explicitly
     # to comply with models that only accept the default temperature.
+    #llm = ChatOpenAI(
+    #    model_name="gpt-4o", #"gpt-5",
+    #    openai_api_key=settings.OPENAI_API_KEY,
+    #    temperature=1.0,
+    #)
     llm = ChatOpenAI(
-        model_name="gpt-4o", #"gpt-5",
-        openai_api_key=settings.OPENAI_API_KEY,
+        model_name="deepseek-ai/DeepSeek-V3.2", #"gpt-5",
+        openai_api_key=settings.DEEPINFRA_API_KEY,
+        base_url=settings.DEEPINFRA_API_BASE_URL,
         temperature=1.0,
     )
     logger.info("✓ LLM initialized")

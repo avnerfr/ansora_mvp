@@ -136,17 +136,16 @@ export default function HomePage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gray-50">
       <Navbar />
       <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <div className="space-y-4">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">
-              Extract Practitioner Truths
+              Ground your copy in real-world operational insights
             </h1>
             <p className="mt-1 text-sm text-slate-600">
-              Provide your context, select operational pain points, and let AI generate
-              a tailored marketing asset.
+              
             </p>
           </div>
 
@@ -154,22 +153,22 @@ export default function HomePage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Left Column: Context */}
             <div className="lg:col-span-1 space-y-3">
-              <section className="bg-white rounded-lg border border-slate-200 p-3">
+              <section className="bg-gray-100 rounded-lg border border-slate-200 p-3">
                 <h2 className="text-sm font-medium text-slate-900 mb-2">
-                  Context
+                  Campaign Context (Optional)
                 </h2>
                 <TextArea
                   label=""
                   rows={8}
                   value={contextText}
                   onChange={(e) => setContextText(e.target.value)}
-                  placeholder="Optional: Add specific context, raw notes, or a unique scenario to guide the AI (or leave blank to use global insights only)..."
+                  placeholder="Add specific notes, goals, or a unique scenario. If left blank, we’ll use global insights from the field..."
                 />
               </section>
 
-              <section className="bg-white rounded-lg border border-slate-200 p-3">
+              <section className="bg-gray-200 rounded-lg border border-slate-200 p-3">
                 <h2 className="text-sm font-medium text-slate-900 mb-2">
-                  Attach Context
+                  Reference Materials (Optional)
                 </h2>
                 <div className="space-y-2">
                   <input
@@ -185,7 +184,7 @@ export default function HomePage() {
                     onClick={handleBrowseClick}
                     className="w-full px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 border border-slate-300 rounded-md hover:bg-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   >
-                    Browse
+                    BROWSE
                   </button>
                   <div className="min-h-[40px] p-2 text-xs border border-slate-200 rounded-md bg-slate-50">
                     {isUploadingContextDocs ? (
@@ -208,9 +207,9 @@ export default function HomePage() {
 
             {/* Right Column: Settings Group */}
             <div className="lg:col-span-2">
-              <section className="bg-white rounded-lg border border-slate-200 p-3 space-y-3">
+              <section className="bg-gray-200 rounded-lg border border-slate-100 p-3 space-y-3">
                 <h2 className="text-sm font-medium text-slate-900 mb-2">
-                  Generation Settings
+                  Settings
                 </h2>
                 
                 {/* Asset Type */}
@@ -225,13 +224,15 @@ export default function HomePage() {
                     id="assetType"
                     value={assetType}
                     onChange={(e) => setAssetType(e.target.value)}
-                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
                   >
-                    <option value="">Select asset type...</option>
+                    <option value="">Select</option>
                     <option value="one-pager">one-pager</option>
                     <option value="email">email</option>
                     <option value="landing page">landing page</option>
                     <option value="blog">blog</option>
+                    <option value="linkedin post">linkedin post</option>
+                    <option value="blog post">blog post</option>
                   </select>
                 </div>
 
@@ -241,15 +242,15 @@ export default function HomePage() {
                     htmlFor="icp"
                     className="block text-xs font-medium text-slate-700 mb-1"
                   >
-                    ICP / Role
+                    Target Audience
                   </label>
                   <select
                     id="icp"
                     value={icp}
                     onChange={(e) => setIcp(e.target.value)}
-                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
                   >
-                    <option value="">Select ICP...</option>
+                    <option value="">Select</option>
                     <option value="Network & Security Operations">Network & Security Operations</option>
                     <option value="Application & Service Delivery">Application & Service Delivery</option>
                     <option value="CIO">CIO</option>
@@ -264,15 +265,15 @@ export default function HomePage() {
                     htmlFor="operationalPain"
                     className="block text-xs font-medium text-slate-700 mb-1"
                   >
-                    Operational Pain
+                    Operational Pain Point
                   </label>
                   <select
                     id="operationalPain"
                     value={selectedOperationalPain}
                     onChange={(e) => setSelectedOperationalPain(e.target.value)}
-                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
                   >
-                    <option value="">Select operational pain...</option>
+                    <option value="">Select</option>
                     {USE_CASE_OPTIONS.map((option) => (
                       <option key={option} value={option}>
                         {option}
@@ -285,15 +286,15 @@ export default function HomePage() {
           </div>
 
           {/* Process Button */}
-          <section className="bg-white rounded-lg border border-slate-200 p-3">
+          <section className="bg-gray-100 rounded-lg border border-slate-200 p-3 flex justify-center">
             <Button
               variant="primary"
               onClick={handleProcess}
               isLoading={isProcessing}
               loadingText="Building Your Optimal Asset"
-              className="w-full py-2 text-sm"
+              className="w-fit py-2 text-sm"
             >
-              Process
+              CREATE ASSET
             </Button>
           </section>
         </div>

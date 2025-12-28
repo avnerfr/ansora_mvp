@@ -25,12 +25,12 @@ export const Navbar: React.FC = () => {
           <div className="flex items-center">
             <Link href="/" className="flex items-center space-x-2">
               <img
-                src="/ansora.png"
+                src="/Ansora Logo 3.png"
                 alt="Ansora"
-                className="h-10 w-auto"
+                className="h-12 w-auto"
               />
               <span className="text-lg font-semibold text-gray-900">
-                Ansora
+                Field-tested insights. Technical truth. No guesswork.
               </span>
             </Link>
           </div>
