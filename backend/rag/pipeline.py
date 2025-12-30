@@ -612,6 +612,7 @@ def build_final_prompt(
     vector_search_context: str,
     asset_type: str | None,
     icp: str | None,
+    company_name: str | None,
     company_analysis: str | None = None,
     competition_analysis: str | None = None
 ) -> str:
@@ -675,34 +676,23 @@ def build_final_prompt(
             competition_info = competition_analysis or ""
 
 
-    prompt = template
-    prompt = prompt.replace('{{backgrounds}}', backgrounds_str)
-    prompt = prompt.replace('{{use_cases}}', backgrounds_str)
-    prompt = prompt.replace('{{marketing_text}}', marketing_text)
-    prompt = prompt.replace('{{context}}', marketing_text)
-    prompt = prompt.replace('{{user_provided_text}}', marketing_text)
-    prompt = prompt.replace('{{vector_search_context}}', vector_search_context)
-    prompt = prompt.replace('{{asset_type}}', asset_type or '')
-    prompt = prompt.replace('{{asset_type_instructions}}', asset_type_instructions)
-    prompt = prompt.replace('{{asset_type_rules[asset_type]}}', asset_type_instructions)
-    prompt = prompt.replace('{{icp}}', icp or '')
-    prompt = prompt.replace('{{company_analysis}}', company_info)
-    prompt = prompt.replace('{{competition_analysis}}', competition_info)
-    
-    # Replace structured company fields if available
-    # Helper function to safely convert values to strings
-    def to_str(value, default=''):
-        if value is None:
-            return default
-        if isinstance(value, list):
-            return ', '.join(str(item) for item in value)
-        return str(value)
-    
-    latest_announcements = company_json.get('latest_anouncements') or company_json.get('latest_announcements')
-    prompt = prompt.replace('{{latest_anouncements}}', to_str(latest_announcements))
-    prompt = prompt.replace('{{company_name}}', to_str(company_json.get('company_name')))
-    prompt = prompt.replace('{{company_domain}}', to_str(company_json.get('company_domain') or company_json.get('website')))
-    prompt = prompt.replace('{{company_value_proposition}}', to_str(company_json.get('company_value_proposition', company_info)))
+    prompt = template.format(
+        backgrounds=backgrounds_str,
+        use_cases=backgrounds_str,
+        marketing_text=marketing_text,
+        context=marketing_text,
+        user_provided_text=marketing_text,
+        vector_search_context=vector_search_context,
+        asset_type=asset_type or '',
+        asset_type_instructions=asset_type_instructions,
+        icp=icp or '',
+        company_analysis=company_info,
+        competition_analysis=competition_info,
+        latest_anouncements=company_json.get('latest_anouncements'),
+        company_name=company_name,
+        company_domain=company_json.get('company_domain') or company_json.get('website'),
+        company_value_proposition=company_json.get('company_value_proposition'),
+    )
 
     # Check for any remaining template variables
     remaining_vars = re.findall(r'\{\{.*?\}\}', prompt)
@@ -776,6 +766,7 @@ async def process_rag(
     asset_type: str | None = None,
     icp: str | None = None,
     template: str | None = None,
+    company_name: str | None = None,
     company_analysis: str | None = None,
     competition_analysis: str | None = None,
 ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
@@ -819,6 +810,7 @@ async def process_rag(
         vector_search_context=vector_search_context,
         asset_type=asset_type,
         icp=icp,
+        company_name=company_name,
         company_analysis=company_analysis,
         competition_analysis=competition_analysis,
 

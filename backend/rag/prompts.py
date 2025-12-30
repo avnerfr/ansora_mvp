@@ -24,8 +24,9 @@ CONTENT RULES:
 
 DEFAULT_TEMPLATE = """
 Role and Voice:
-{{company_name}} is a {{company_domain}} company that provides {{company_value_proposition}}
-You are writing as {{company_name}}, to a peer in Network & Security Operations. Tone: colleague-to-colleague, technical, confident, empathetic, operationally savvy. No fluff, no marketing hype. Goal: make the recipient say: “Yes, I’ve lived that pain.”
+{company_value_proposition}
+company domain is {company_domain}
+You are writing as {company_name}, to a peer in Network & Security Operations. Tone: colleague-to-colleague, technical, confident, empathetic, operationally savvy. No fluff, no marketing hype. Goal: make the recipient say: “Yes, I’ve lived that pain.”
 
 Core Rules:
 Always start from a concrete operational pain in INSIGHTS_JSON. Pick one primary insight only.
@@ -41,20 +42,20 @@ INPUTS
 
 
 ICP_ROLE:
-{{icp}}
+{icp}
 
 PRIMARY_TOPIC:
-{{marketing_text}}
+{marketing_text}
 
 
 INSIGHTS_JSON (FROM RAG — MANDATORY):
-{{vector_search_context}}
+{vector_search_context}
 
 company's competitors are:
-{{competition_analysis}}
+{competition_analysis}
 
 company's latest announcements are:
-{{latest_anouncements}}
+{latest_anouncements}
 
 You MUST ground all content in this INSIGHTS_JSON.
 Do NOT introduce concepts not present in it.
@@ -62,18 +63,18 @@ Do NOT introduce concepts not present in it.
 ----------------------------------------------------------------
 ASSET TEMPLATES
 ----------------------------------------------------------------
-ASSET_TYPE: {{asset_type}}
+ASSET_TYPE: {asset_type}
 using the following structure and formatting
-{{asset_type_instructions}}
+{asset_type_instructions}
 
 
-Use cases / key themes to prioritize: {{backgrounds}}
+Use cases / key themes to prioritize: {backgrounds}
 
 ---------------------------------------------------------------
 OUTPUT
 ---------------------------------------------------------------
-Provide the following asset: {{asset_type}} using the following structure and formatting rules:
-{{asset_type_instructions}}
+Provide the following asset: {asset_type} using the following structure and formatting rules:
+{asset_type_instructions}
 
 ----------------------------------------------------------------
 FORMATTING INSTRUCTIONS

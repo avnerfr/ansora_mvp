@@ -265,6 +265,7 @@ async def process_marketing_material(
             asset_type=request.asset_type,
             icp=request.icp,
             template=template,
+            company_name=company_name,
             company_analysis=company_analysis,
             competition_analysis=competition_analysis,
         )
