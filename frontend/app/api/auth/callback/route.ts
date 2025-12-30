@@ -5,8 +5,6 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {
-    const client = await getCognitoOidcClient()
-    
     const code = request.nextUrl.searchParams.get('code')
     
     if (!code) {
@@ -14,7 +12,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/auth/login?error=missing_code', request.url))
     }
     
-    const redirectUri = process.env.COGNITO_REDIRECT_URI || 'https://ansora-mvp.vercel.app/api/auth/callback'
+    // Use root domain as redirect URI to match Cognito configuration
+    // Cognito redirects to http://localhost:3000 (root), not /api/auth/callback
+    const redirectUri = request.nextUrl.origin
+    
+    const client = await getCognitoOidcClient(redirectUri)
     
     // Exchange code for tokens (skip state/nonce verification)
     const tokenSet = await client.callback(redirectUri, { code })

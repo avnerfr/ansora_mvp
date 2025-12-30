@@ -86,6 +86,7 @@ export const ragAPI = {
       assetType?: string
       icp?: string
       templateOverride?: string
+      company?: string
     }
   ) => {
     const response = await apiClient.post('/rag/process', {
@@ -94,6 +95,7 @@ export const ragAPI = {
       asset_type: options?.assetType,
       icp: options?.icp,
       template_override: options?.templateOverride,
+      company: options?.company,
     })
     return response.data
   },

@@ -1,17 +1,16 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getCognitoOidcClient } from '@/lib/cognito-oidc.server'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const client = await getCognitoOidcClient()
-    const redirectUri = process.env.COGNITO_REDIRECT_URI
+    // Use root domain as redirect URI to match Cognito configuration
+    // Cognito is configured to redirect to http://localhost:3000 (root)
+    const redirectUri = request.nextUrl.origin
     
-    if (!redirectUri) {
-      console.error('COGNITO_REDIRECT_URI is not configured')
-      return NextResponse.redirect(new URL('/auth/login?error=config_error', process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'))
-    }
+    // Get client with the dynamically constructed redirect URI
+    const client = await getCognitoOidcClient(redirectUri)
     
     const authUrl = client.authorizationUrl({
       redirect_uri: redirectUri,

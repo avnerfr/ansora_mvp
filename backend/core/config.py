@@ -63,8 +63,8 @@ class Settings:
     ALLOWED_ORIGINS: str = field(default_factory=lambda: os.getenv("ALLOWED_ORIGINS", "http://localhost:3000"))
     STORAGE_PATH: str = field(default_factory=lambda: os.getenv("STORAGE_PATH", "./storage"))
     # Cognito configuration for JWT verification
-    COGNITO_REGION: str = field(default_factory=lambda: os.getenv("COGNITO_REGION", "eu-north-1"))
-    COGNITO_USER_POOL_ID: str = field(default_factory=lambda: os.getenv("COGNITO_USER_POOL_ID", "eu-north-1_sa160lFGQ"))
+    COGNITO_REGION: str = field(default_factory=lambda: os.getenv("COGNITO_REGION", "us-east-1"))
+    COGNITO_USER_POOL_ID: str = field(default_factory=lambda: os.getenv("COGNITO_USER_POOL_ID", "us-east-1_kOwOgLGdg"))
     DEEPINFRA_API_KEY: str = field(default_factory=lambda: os.getenv("DEEPINFRA_API_KEY", ""))
     DEEPINFRA_API_BASE_URL: str = field(default_factory=lambda: os.getenv("DEEPINFRA_API_BASE_URL", "https://api.deepinfra.com/v1/openai"))
 

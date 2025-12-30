@@ -84,6 +84,7 @@ class RAGProcessRequest(BaseModel):
     asset_type: Optional[str] = None
     icp: Optional[str] = None
     template_override: Optional[str] = None
+    company: Optional[str] = None  # Company name (for administrators)
 
 
 class RAGProcessResponse(BaseModel):

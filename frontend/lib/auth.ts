@@ -11,9 +11,10 @@ export const isAuthenticated = (): boolean => {
 }
 
 export const logout = (): void => {
-  // Clear cookies first
+  // Clear cookies first (client-side)
   clearAllCognitoCookies()
-  // Then redirect to logout endpoint
+  
+  // Redirect to logout endpoint which will clear server-side cache and redirect to login
   window.location.href = '/api/auth/logout'
 }
 
@@ -53,6 +54,7 @@ export const clearAllCognitoCookies = (): void => {
     'cognito_user',
     'oidc_nonce',
     'oidc_state',
+    'redirect_after_login',
   ]
   
   const hostname = window.location.hostname
@@ -66,5 +68,22 @@ export const clearAllCognitoCookies = (): void => {
       document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; domain=.${baseDomain};`
     }
   })
+  
+  // Also clear any localStorage items that might be related
+  try {
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('cognito_access_token')
+    localStorage.removeItem('cognito_id_token')
+    localStorage.removeItem('cognito_user')
+  } catch (e) {
+    // Ignore localStorage errors (e.g., in private browsing mode)
+  }
+  
+  // Clear sessionStorage as well
+  try {
+    sessionStorage.clear()
+  } catch (e) {
+    // Ignore sessionStorage errors
+  }
 }
 

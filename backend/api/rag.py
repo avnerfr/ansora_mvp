@@ -14,10 +14,15 @@ from models import (
     RAGProcessRequest, RAGProcessResponse,
     RAGResultResponse, SourceItem, PromptTemplateRequest, PromptTemplateResponse
 )
-from core.auth import get_current_user
+from core.auth import get_current_user, get_cognito_groups_from_token
 from rag.pipeline import process_rag, DEFAULT_TEMPLATE
 from rag.loader import load_document
+from rag.agents import company_analysis_agent, competition_analysis_agent
+from rag.s3_utils import get_latest_company_file, save_company_file, get_company_website
 from core.config import settings
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+security = HTTPBearer()
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -164,7 +169,8 @@ async def upload_context_documents(
 async def process_marketing_material(
     request: RAGProcessRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Process marketing material through RAG pipeline."""
     logger.info(f"POST /api/v1/rag/process - User: {current_user.email} (ID: {current_user.id})")
@@ -177,10 +183,67 @@ async def process_marketing_material(
             detail="At least one background must be selected"
         )
     
+    # Determine company name
+    company_name = None
+    if request.company:
+        # Administrator selected company from dropdown
+        company_name = request.company
+        logger.info(f"Using company from request (admin): {company_name}")
+    else:
+        # Get company from Cognito groups (non-admin users)
+        token = credentials.credentials
+        groups = get_cognito_groups_from_token(token)
+        # Filter out Administrators group
+        company_groups = [g for g in groups if g != 'Administrators']
+        if company_groups:
+            company_name = company_groups[0]  # Use first non-admin group
+            logger.info(f"Using company from Cognito groups: {company_name}")
+        else:
+            logger.warning("No company found in Cognito groups and no company in request")
+    
+    # Get or generate company information
+    company_analysis = None
+    competition_analysis = None
+    
+    if company_name:
+        # Check S3 for existing company information
+        company_file = get_latest_company_file(company_name)
+        
+        if company_file:
+            # Use existing data
+            company_analysis = company_file['data'].get('company_analysis')
+            competition_analysis = company_file['data'].get('competition_analysis')
+            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            logger.info(f"Using cached company information from {company_file['date']}")
+            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+        else:
+            # Generate new company information
+            logger.info(f"Generating new company information for {company_name}")
+            company_website = get_company_website(company_name)
+            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            logger.info(f"company_website: {company_website}")
+            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            try:
+                company_analysis = company_analysis_agent(company_name, company_website)
+                competition_analysis = competition_analysis_agent(company_name, company_website)
+                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                logger.info(f"company_analysis: {company_analysis}")
+                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")            
+                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+                logger.info(f"competition_analysis: {competition_analysis}")
+                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")                
+                # Save to S3
+                save_company_file(company_name, company_analysis, competition_analysis)
+                logger.info(f"Saved company information to S3 for {company_name}")
+            except Exception as e:
+                logger.error(f"Error generating company information: {e}")
+                # Continue without company information rather than failing
+    
     logger.info(
         f"Request validated - Backgrounds: {request.backgrounds}, "
         f"Text length: {len(request.marketing_text)}, "
-        f"Asset Type: {request.asset_type}, ICP: {request.icp}"
+        f"Asset Type: {request.asset_type}, ICP: {request.icp}, "
+        f"Company: {company_name}"
     )
     
     # Get user's template or use override
@@ -202,6 +265,8 @@ async def process_marketing_material(
             asset_type=request.asset_type,
             icp=request.icp,
             template=template,
+            company_analysis=company_analysis,
+            competition_analysis=competition_analysis,
         )
         logger.info(f"✓ RAG pipeline completed - Output: {len(refined_text)} chars, Sources: {len(sources)}, Retrieved Docs: {len(retrieved_docs)}")
     except Exception as e:

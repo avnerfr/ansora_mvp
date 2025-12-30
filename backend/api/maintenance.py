@@ -157,7 +157,7 @@ async def create_collection(
         try:
             vector_store.client.create_payload_index(
                 collection_name=collection_name,
-                field_name="post_id",
+                field_name="id",
                 field_schema=PayloadSchemaType.KEYWORD
             )
             logger.info(f"Created index on 'post_id' field for collection: {collection_name}")

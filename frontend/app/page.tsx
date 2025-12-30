@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useRef, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import { Navbar } from '@/components/Navbar'
 import { TextArea } from '@/components/TextArea'
 import { Button } from '@/components/Button'
 import { ragAPI } from '@/lib/api'
-import { isAuthenticated } from '@/lib/auth'
+import { isAuthenticated, isAdmin } from '@/lib/auth'
 
 const USE_CASE_OPTIONS = [
   'Afraid to push a network change without knowing what will break',
@@ -19,8 +19,9 @@ const USE_CASE_OPTIONS = [
   'Audits fail because policy intent cannot be proven',
 ]
 
-export default function HomePage() {
+function HomePageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [selectedOperationalPain, setSelectedOperationalPain] = useState<string>('')
   const [contextText, setContextText] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
@@ -28,21 +29,44 @@ export default function HomePage() {
   const [hasToken, setHasToken] = useState(false)
   const [assetType, setAssetType] = useState<string>('')
   const [icp, setIcp] = useState<string>('')
+  const [selectedCompany, setSelectedCompany] = useState<string>('')
+  const [isAdminUser, setIsAdminUser] = useState(false)
   const [isUploadingContextDocs, setIsUploadingContextDocs] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  const COMPANY_OPTIONS = ['Algosec', 'CyberArk', 'JFrog', 'Cloudinary']
+
+  // Handle Cognito callback - if there's a code parameter, redirect to callback API
+  useEffect(() => {
+    const code = searchParams.get('code')
+    if (code) {
+      // Redirect to callback API with the code
+      window.location.href = `/api/auth/callback?code=${code}`
+      return
+    }
+  }, [searchParams])
+
   // Check authentication only after component mounts
   useEffect(() => {
+    const code = searchParams.get('code')
+    // Skip auth check if we're processing a callback
+    if (code) return
+    
     const token = isAuthenticated()
     console.log('Auth check:', token)
     setHasToken(token)
     setAuthChecked(true)
     
+    // Check if user is admin
+    if (token) {
+      setIsAdminUser(isAdmin())
+    }
+    
     if (!token) {
       router.push('/auth/login')
     }
-  }, [router])
+  }, [router, searchParams])
 
   const handleContextFilesSelected = async (files: File[]) => {
     if (!files || files.length === 0) return
@@ -110,6 +134,7 @@ export default function HomePage() {
         {
           assetType,
           icp,
+          company: isAdminUser ? selectedCompany : undefined,
         }
       )
       console.log('Response: ', response)
@@ -281,6 +306,31 @@ export default function HomePage() {
                     ))}
                   </select>
                 </div>
+
+                {/* Company Selection - Only for Administrators */}
+                {isAdminUser && (
+                  <div>
+                    <label
+                      htmlFor="company"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Company
+                    </label>
+                    <select
+                      id="company"
+                      value={selectedCompany}
+                      onChange={(e) => setSelectedCompany(e.target.value)}
+                      className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
+                    >
+                      <option value="">Select</option>
+                      {COMPANY_OPTIONS.map((company) => (
+                        <option key={company} value={company}>
+                          {company}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </section>
             </div>
           </div>
@@ -300,6 +350,18 @@ export default function HomePage() {
         </div>
       </main>
     </div>
+  )
+}
+
+export default function HomePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    }>
+      <HomePageContent />
+    </Suspense>
   )
 }
 

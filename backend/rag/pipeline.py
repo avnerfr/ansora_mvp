@@ -9,6 +9,7 @@ import re
 import json
 import tiktoken
 
+
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -358,7 +359,8 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str, max_do
 
 async def build_retrieval_query(
     marketing_text: str,
-    backgrounds: List[str]
+    backgrounds: List[str],
+    company_analysis: str
 ) -> str:
     """
     Build an optimized retrieval query using LLM for vector database search.
@@ -376,10 +378,17 @@ async def build_retrieval_query(
     # Ensure marketing_text and backgrounds_str are strings and not None
     marketing_text = marketing_text or ""
     backgrounds_str = backgrounds_str or ""
+    # extract json from company_analysis (between ```json and ```)
+    company_json = re.search(r'```json(.*)```', company_analysis, re.DOTALL).group(1)
+    company_json = json.loads(company_json)
+    company_value_proposition = company_json.get('company_value_proposition', '')
+    company_domain = company_json.get('company_domain', '')
 
     retrieval_prompt = VECTOR_DB_RETREIVAL_PROMPT.format(
         user_provided_text=marketing_text,
-        backgrounds=backgrounds_str
+        backgrounds=backgrounds_str,
+        company_value_proposition=company_value_proposition,
+        company_domain=company_domain
     )
 
     logger.info("$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT $$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
@@ -393,11 +402,13 @@ async def build_retrieval_query(
         #    openai_api_key=settings.OPENAI_API_KEY,
         #    temperature=1.0,
         #)
+        openai_api_key = settings.DEEPINFRA_API_KEY
+        base_url = settings.DEEPINFRA_API_BASE_URL
         retrieval_llm = ChatOpenAI(
             model_name="deepseek-ai/DeepSeek-V3.2", #"gpt-5",
-            openai_api_key=settings.DEEPINFRA_API_KEY,
-            base_url=settings.DEEPINFRA_API_BASE_URL,
-            temperature=1.0,
+            openai_api_key=openai_api_key,
+            base_url=base_url,
+#            temperature=0.1,
         )
         rq_messages = [HumanMessage(content=retrieval_prompt)]
         rq_response = await retrieval_llm.ainvoke(rq_messages)
@@ -435,10 +446,16 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
         reddit_docs = []
         youtube_docs = []
         podcast_docs = []
-        if(count_tokens(retrieval_query) > 100):
-            retrieval_query_chunks = vector_store.chunking(retrieval_query)
-        else:
-            retrieval_query_chunks = [retrieval_query]
+
+        # seperate the retreival query into lines and then check if they are longer than 100 tokens
+        # if they are, then chunk them into smaller pieces
+        # if they are not, then add them to the retrieval_query_chunks
+        retrieval_query_chunks = []
+        for line in retrieval_query.split("\n"):
+            if count_tokens(line) > 100:
+                retrieval_query_chunks.extend(vector_store.chunking(line))
+            else:
+                retrieval_query_chunks.append(line) 
 
         for chunk in retrieval_query_chunks:
             logger.info(f"Searching for chunk: {chunk} in reddit posts, youtube videos, and podcasts")
@@ -594,7 +611,9 @@ def build_final_prompt(
     marketing_text: str,
     vector_search_context: str,
     asset_type: str | None,
-    icp: str | None
+    icp: str | None,
+    company_analysis: str | None = None,
+    competition_analysis: str | None = None
 ) -> str:
     """
     Build the final prompt by replacing template variables.
@@ -614,6 +633,47 @@ def build_final_prompt(
 
     # Expand structured rule blocks from asset type dictionaries
     asset_type_instructions = asset_type_rules.get(asset_type, asset_type or "") if asset_type else ""
+    
+    # Process company analysis if provided
+    # Try to extract JSON from company_analysis if it's wrapped in code blocks
+    company_info = ""
+    company_json = {}
+    if company_analysis:
+        try:
+            # Check if company_analysis contains JSON in code blocks
+            json_match = re.search(r'```json\s*(.*?)\s*```', company_analysis, re.DOTALL)
+            if json_match:
+                company_info = json_match.group(1).strip()
+                # Try to parse as JSON
+                try:
+                    company_json = json.loads(company_info)
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, use the text as-is
+                    company_json = {'company_analysis': company_info}
+            else:
+                # If no JSON blocks, use the analysis as-is
+                company_info = company_analysis
+                company_json = {'company_analysis': company_analysis}
+        except Exception as e:
+            logger.warning(f"Error parsing company analysis: {e}, using as-is")
+            company_info = company_analysis or ""
+            company_json = {'company_analysis': company_info}
+    
+    # Process competition analysis if provided
+    competition_info = ""
+    if competition_analysis:
+        try:
+            # Check if competition_analysis contains JSON in code blocks
+            json_match = re.search(r'```json\s*(.*?)\s*```', competition_analysis, re.DOTALL)
+            if json_match:
+                competition_info = json_match.group(1).strip()
+            else:
+                # If no JSON blocks, use the analysis as-is
+                competition_info = competition_analysis
+        except Exception as e:
+            logger.warning(f"Error parsing competition analysis: {e}, using as-is")
+            competition_info = competition_analysis or ""
+
 
     prompt = template
     prompt = prompt.replace('{{backgrounds}}', backgrounds_str)
@@ -626,9 +686,25 @@ def build_final_prompt(
     prompt = prompt.replace('{{asset_type_instructions}}', asset_type_instructions)
     prompt = prompt.replace('{{asset_type_rules[asset_type]}}', asset_type_instructions)
     prompt = prompt.replace('{{icp}}', icp or '')
+    prompt = prompt.replace('{{company_analysis}}', company_info)
+    prompt = prompt.replace('{{competition_analysis}}', competition_info)
+    
+    # Replace structured company fields if available
+    # Helper function to safely convert values to strings
+    def to_str(value, default=''):
+        if value is None:
+            return default
+        if isinstance(value, list):
+            return ', '.join(str(item) for item in value)
+        return str(value)
+    
+    latest_announcements = company_json.get('latest_anouncements') or company_json.get('latest_announcements')
+    prompt = prompt.replace('{{latest_anouncements}}', to_str(latest_announcements))
+    prompt = prompt.replace('{{company_name}}', to_str(company_json.get('company_name')))
+    prompt = prompt.replace('{{company_domain}}', to_str(company_json.get('company_domain') or company_json.get('website')))
+    prompt = prompt.replace('{{company_value_proposition}}', to_str(company_json.get('company_value_proposition', company_info)))
 
     # Check for any remaining template variables
-    import re
     remaining_vars = re.findall(r'\{\{.*?\}\}', prompt)
     if remaining_vars:
         logger.warning(f"⚠ Found unreplaced template variables: {remaining_vars}")
@@ -700,6 +776,8 @@ async def process_rag(
     asset_type: str | None = None,
     icp: str | None = None,
     template: str | None = None,
+    company_analysis: str | None = None,
+    competition_analysis: str | None = None,
 ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
     """
     Process RAG pipeline and return refined text, sources, retrieved documents, and final prompt.
@@ -724,7 +802,7 @@ async def process_rag(
         logger.info("Using custom/override template")
     
     # Step 1: Build optimized retrieval query
-    retrieval_query = await build_retrieval_query(marketing_text, backgrounds)
+    retrieval_query = await build_retrieval_query(marketing_text, backgrounds, company_analysis)
     backgrounds_str = ", ".join(backgrounds)
 
     # Step 2: Retrieve documents from vector DB
@@ -740,7 +818,10 @@ async def process_rag(
         marketing_text=marketing_text,
         vector_search_context=vector_search_context,
         asset_type=asset_type,
-        icp=icp
+        icp=icp,
+        company_analysis=company_analysis,
+        competition_analysis=competition_analysis,
+
     )
 
     # Step 5: Generate LLM response

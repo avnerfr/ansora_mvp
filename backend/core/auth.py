@@ -177,3 +177,27 @@ async def get_current_user(
     except Exception as e:
         logger.error(f"Auth error: {e}")
         raise credentials_exception
+
+
+def get_cognito_groups_from_token(token: str) -> list[str]:
+    """
+    Extract Cognito groups from JWT token.
+    
+    Args:
+        token: JWT access token
+        
+    Returns:
+        List of group names
+    """
+    try:
+        # Decode token payload (without verification, just to read groups)
+        payload_data = token.split('.')[1]
+        # Add padding if needed
+        payload_data += '=' * (4 - len(payload_data) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(payload_data))
+        
+        groups = payload.get('cognito:groups', [])
+        return groups if isinstance(groups, list) else []
+    except Exception as e:
+        logger.warning(f"Could not extract groups from token: {e}")
+        return []
