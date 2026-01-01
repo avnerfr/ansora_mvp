@@ -8,7 +8,19 @@ import logging
 import re
 import json
 import tiktoken
+import smtplib
+import ssl
+from email.message import EmailMessage
+import os
+from datetime import datetime
+from dotenv import load_dotenv
+load_dotenv()   
 
+
+# Define email sender and receiver
+sender_email = os.getenv("GOOGLE_APP_MAIL")
+receiver_email = "ansora.tech@gmail.com;avner.fr@gmail.com" # Can be a list of emails
+app_password = os.getenv("GOOGLE_APP_PASSWORD") # Use the generated App Password
 
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
 # Configure logging
@@ -391,9 +403,9 @@ async def build_retrieval_query(
         company_domain=company_domain
     )
 
-    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT $$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-    logger.info(retrieval_prompt)
-    logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    #logger.info("$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT $$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    #logger.info(retrieval_prompt)
+    #logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
 
     retrieval_query = marketing_text
     try:
@@ -423,7 +435,7 @@ async def build_retrieval_query(
             f"{type(e).__name__}: {str(e)}"
         )
 
-    return retrieval_query
+    return retrieval_query, retrieval_prompt
 
 
 async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]]:
@@ -793,7 +805,7 @@ async def process_rag(
         logger.info("Using custom/override template")
     
     # Step 1: Build optimized retrieval query
-    retrieval_query = await build_retrieval_query(marketing_text, backgrounds, company_analysis)
+    retrieval_query, retrieval_prompt = await build_retrieval_query(marketing_text, backgrounds, company_analysis)
     backgrounds_str = ", ".join(backgrounds)
 
     # Step 2: Retrieve documents from vector DB
@@ -848,4 +860,63 @@ async def process_rag(
             retrieved_docs_formatted.append(doc_dict)
 
     logger.info("=== RAG Pipeline Completed Successfully ===")
+    
+    # Send email notification (non-blocking - don't fail pipeline if email fails)
+    send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
+     company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, prompt, refined_text, sources, retrieved_docs)
+
+    
     return refined_text, sources, retrieved_docs_formatted, prompt
+
+def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template, 
+                company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                prompt, refined_text, sources, retrieved_docs):
+    """Send email notification. Returns True if successful, False otherwise."""
+    if not sender_email or not app_password:
+        logger.warning("Email credentials not configured, skipping email send")
+        return False
+
+
+    try:
+  
+        email = f"User ID: {user_id}"
+        email += f"\nContext: {marketing_text}"
+        email += f"\nAsset Type: {asset_type}"
+        email += f"\nTarget Audience: {icp}"        
+        email += f"\nPain Points : {backgrounds}"
+        email += f"\nCompany Name: {company_name}"
+        email += f"\n\n------------------------------------------------\n"
+        str =  re.search(r'```json(.*)```', company_analysis, re.DOTALL).group(1)
+        json_data = json.loads(str)
+        email += f"\nCompany Analysis:\n{json.dumps(json_data, indent=4)}"
+        email += f"\n\n------------------------------------------------\n"
+        email += f"\nCompetition Analysis:\n{competition_analysis}"
+        email += f"\n\n------------------------------------------------\n"
+        email += f"\nRetrieval Prompt:\n{retrieval_prompt}"
+        email += f"\n\n------------------------------------------------\n"
+        email += f"\nRetrieval Query:\n{retrieval_query}"
+        email += f"\n\n------------------------------------------------\n"
+        email += f"\nVector Search Results:\n{vector_search_context}"
+        email += f"\n\n------------------------------------------------\n"
+        email += f"\nAsset Creation Prompt:\n{prompt}"
+        email += f"\n\n------------------------------------------------\n"
+        email += f"\nAsset Creation Result:\n{refined_text}"
+        email += f"\n\n------------------------------------------------\n"
+
+
+        logger.info(f"Sending email to {receiver_email}")
+        msg = EmailMessage()
+        msg.set_content(email)
+        msg['Subject'] = f"RAG Pipeline Completed Successfully - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        msg['From'] = sender_email
+        msg['To'] = receiver_email
+        
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as server:
+            server.login(sender_email, app_password)
+            server.send_message(msg)
+        logger.info("Email sent successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
+        return False
