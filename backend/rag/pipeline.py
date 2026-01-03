@@ -1,3 +1,4 @@
+import boto3
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -14,10 +15,10 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import base64
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+#from google.auth.transport.requests import Request
+#from google.oauth2.credentials import Credentials
+#from googleapiclient.discovery import build
+#from googleapiclient.errors import HttpError
 load_dotenv()   
 
 
@@ -445,7 +446,7 @@ async def build_retrieval_query(
     return retrieval_query, retrieval_prompt
 
 
-async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]]:
+async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[List[Any], List[Any]]:
     """
     Retrieve relevant documents from vector database using the retrieval query.
 
@@ -475,13 +476,25 @@ async def retrieve_documents(retrieval_query: str) -> tuple[List[Any], List[Any]
                 retrieval_query_chunks.extend(vector_store.chunking(line))
             else:
                 retrieval_query_chunks.append(line) 
+        # read company_enumerations.json from bucket 
+        #  and add the enumerations to the retrieval_query_chunks
+        s3 = boto3.client('s3')
+        key = company_name.lower()+'_enumerations.json'
+        logger.info(f"Reading company enumerations from S3: {key}")
+        response = s3.get_object(Bucket='ansora-company-enumerations', Key=key)
+        company_enumerations = json.loads(response['Body'].read().decode('utf-8'))
+
+        logger.info(f"Company enumerations: {company_enumerations}")
+
 
         for chunk in retrieval_query_chunks:
             logger.info(f"Searching for chunk: {chunk} in reddit posts, youtube videos, and podcasts")
-            reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10))
-            youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3))
-            podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3))
+            reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10, company_enumerations=company_enumerations))
+            youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3, company_enumerations=company_enumerations))
+            podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3, company_enumerations=company_enumerations))
 
+
+ 
         reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "url",10)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
@@ -817,7 +830,7 @@ async def process_rag(
     backgrounds_str = ", ".join(backgrounds)
 
     # Step 2: Retrieve documents from vector DB
-    external_docs, retrieved_docs = await retrieve_documents(retrieval_query)
+    external_docs, retrieved_docs = await retrieve_documents(retrieval_query, company_name)
 
     # Step 3: Build vector search context
     vector_search_context = build_vector_search_context(retrieved_docs)

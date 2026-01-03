@@ -5,7 +5,7 @@ from qdrant_client.models import PointStruct, VectorParams, Distance
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
-from qdrant_client.models import Filter, FieldCondition, MatchValue, Prefetch
+from qdrant_client.models import Filter, FieldCondition, MatchValue, MatchAny, Prefetch
 from core.config import settings
 import uuid
 import logging
@@ -222,7 +222,7 @@ class VectorStore:
 
 
     
-    def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post") -> List[Document]:
+    def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post", company_enumerations: List[str] = []) -> List[Document]:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
             logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}")
@@ -317,6 +317,14 @@ class VectorStore:
             
             # Search using direct Qdrant client API
             logger.info(f"Performing similarity search with k={k} ")
+
+            logger.info(f"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+            logger.info(f"company_enumerations: {company_enumerations}")
+            logger.info(f"company_enumerations.get('domain'): {company_enumerations.get('domain')}")
+            logger.info(f"company_enumerations.get('operational_surface'): {company_enumerations.get('operational_surface')}")
+            logger.info(f"company_enumerations.get('security_control_surface'): {company_enumerations.get('security_control_surface')}")
+            logger.info(f"company_enumerations.get('failure_type'): {company_enumerations.get('failure_type')}")
+
             search_results = self.client.query_points(
                 collection_name=collection_name_to_use,
                 query=query_vector,
@@ -325,7 +333,12 @@ class VectorStore:
                 with_vectors=False,
 
                 query_filter=Filter(
-                    must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type))]
+                    must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type)),
+                        FieldCondition(key="domain", match=MatchAny(any=company_enumerations.get("domain", []))),
+                        FieldCondition(key="operational_surface", match=MatchAny(any=company_enumerations.get("operational_surface", []))),
+                        FieldCondition(key="security_control_surface", match=MatchAny(any=company_enumerations.get("security_control_surface", []))),
+                        FieldCondition(key="failure_type", match=MatchAny(any=company_enumerations.get("failure_type", [])))
+                    ]
                 ),
             )
             logger.info(f"✓ Search completed: {len(search_results.points)} results")
@@ -334,8 +347,8 @@ class VectorStore:
             logger.error(f"❌ Error searching Documents: {type(e).__name__}: {str(e)}", exc_info=True)
             return []
             
-    def search_reddit_posts(self, query: str, k: int = 3) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "reddit_post")
+    def search_reddit_posts(self, query: str, k: int = 3, company_enumerations: List[str] = []) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "reddit_post", company_enumerations)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -400,8 +413,8 @@ class VectorStore:
         
 
     
-    def search_youtube_summaries(self, query: str, k: int = 3) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "youtube_summary")
+    def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = []) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "youtube_summary", company_enumerations)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -460,8 +473,8 @@ class VectorStore:
         logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
         return documents
 
-    def search_podcast_summaries(self, query: str, k: int = 3) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "podcast_summary")
+    def search_podcast_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = []) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "podcast_summary", company_enumerations)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
