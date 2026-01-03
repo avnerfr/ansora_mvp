@@ -7,5 +7,8 @@ ALTER TABLE jobs ADD COLUMN retrieved_docs JSON;
 -- Add final_prompt column to jobs table
 ALTER TABLE jobs ADD COLUMN final_prompt TEXT;
 
+-- Add email_content column to jobs table
+ALTER TABLE jobs ADD COLUMN email_content TEXT;
+
 -- Verify the changes
 .schema jobs

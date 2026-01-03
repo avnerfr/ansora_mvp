@@ -14,6 +14,10 @@ import nltk
 import re
 from langchain_text_splitters import (RecursiveCharacterTextSplitter, CharacterTextSplitter)
 from openai import OpenAI
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 
 nltk.download('punkt')
 
@@ -135,7 +139,7 @@ class VectorStore:
             chunks = text_splitter.split_text(text)
             return [c.strip() for c in chunks if c.strip()]
         except Exception as e:
-            print(f"Error chunking text: {e}")
+            logger.error(f"Error chunking text: {e}", exc_info=True)
             return [text]   
 
     def chunking_naive(self, text: str) -> List[str]:
@@ -150,7 +154,7 @@ class VectorStore:
             chunks = re.split(r'(?<=[.!?])\s+', text)
             return [c.strip() for c in chunks if c.strip()]
         except Exception as e:
-            print(f"Error chunking text: {e}")
+            logger.error(f"Error chunking text: {e}", exc_info=True)
             return [text]
 
 
@@ -159,8 +163,10 @@ class VectorStore:
         """Get the Qdrant collection name for a user."""
         return f"user_{user_id}_documents"
     
-    def create_collection_if_not_exists(self, user_id: int, vector_size: int = 1536):
+    def create_collection_if_not_exists(self, user_id: int, vector_size: int = None):
         """Create a Qdrant collection for a user if it doesn't exist."""
+        if vector_size is None:
+            vector_size = self._vector_size  # Use the model's vector size
         collection_name = self.get_collection_name(user_id)
         try:
             collections = self.client.get_collections().collections
@@ -170,8 +176,9 @@ class VectorStore:
                     collection_name=collection_name,
                     vectors_config={"size": vector_size, "distance": "Cosine"}
                 )
+                logger.info(f"Created collection {collection_name} with vector size {vector_size}")
         except Exception as e:
-            print(f"Error creating collection: {e}")
+            logger.error(f"Error creating collection: {e}", exc_info=True)
             # Collection might already exist, continue
     
     def add_documents(
@@ -227,34 +234,35 @@ class VectorStore:
             logger.info(f"Available collections in cloud Qdrant: {collection_names}")
             
             # Use the unified summaries collection
-            collection_name_to_use = "summaries_1_2"
+            collection_name_to_use = os.getenv("SUMMARIES_COLLECTION_NAME")
+            
+            # If not set, try to auto-detect from available collections
+            if not collection_name_to_use:
+                # Prefer cybersecurity-summaries_1_0 if available, otherwise use any summaries collection
+                if 'cybersecurity-summaries_1_0' in collection_names:
+                    collection_name_to_use = 'cybersecurity-summaries_1_0'
+                    logger.info(f"Auto-detected collection: {collection_name_to_use} (default)")
+                else:
+                    # Try to find any summaries collection (prefer newer versions)
+                    summaries_collections = [name for name in collection_names if 'summaries' in name.lower()]
+                    if summaries_collections:
+                        # Sort to prefer newer versions (higher numbers)
+                        summaries_collections.sort(reverse=True)
+                        collection_name_to_use = summaries_collections[0]
+                        logger.info(f"Auto-detected collection: {collection_name_to_use} (from available: {collection_names})")
+                    else:
+                        logger.warning(f"❌ No SUMMARIES_COLLECTION_NAME set and no summaries collection found. Available collections: {collection_names}")
+                        return []
+            
             if collection_name_to_use not in collection_names:
-                logger.warning(
-                    f"❌ summaries_1_2 collection not found in cloud Qdrant. "
-                    f"Available collections: {collection_names}"
-                )
+                logger.warning(f"❌ {collection_name_to_use} not found in cloud Qdrant. Available collections: {collection_names}")
                 return []
             
             # Get collection info
             try:
                 collection_info = self.client.get_collection(collection_name_to_use)
                 # Access vector size - handle different Qdrant client versions
-                try:
-                    # Try standard access pattern
-                    actual_vector_size = collection_info.config.params.vectors.size
-                except (AttributeError, TypeError):
-                    try:
-                        # Try alternative access pattern
-                        actual_vector_size = collection_info.config.vectors.size
-                    except (AttributeError, TypeError):
-                        # Try direct access
-                        actual_vector_size = getattr(collection_info.config, 'vectors', {}).get('size') or \
-                                           getattr(collection_info.config.params, 'vectors', {}).get('size')
-                        if actual_vector_size is None:
-                            logger.error(f"❌ Could not determine vector size from collection config")
-                            logger.error(f"Collection config structure: {collection_info.config}")
-                            return []
-                
+                actual_vector_size = collection_info.config.params.vectors.size
                 points_count = getattr(collection_info, 'points_count', 0)
                 logger.info(f"Collection info: {points_count} points, {actual_vector_size}D vectors")
             except Exception as e:
@@ -264,7 +272,7 @@ class VectorStore:
             # Generate query embedding using OpenAI text-embedding-3-small
             try:
                 if actual_vector_size == 768:
-                    # Collection uses text-embedding-3-small (3072D)
+                    # Collection uses BAAI/bge-base-en-v1.5 (768D)
                     logger.info("Generating query embedding with BAAI/bge-base-en-v1.5")
                     embeddings = self.embeddings  # OpenAI embeddings
                     if embeddings is None:
@@ -278,22 +286,23 @@ class VectorStore:
                         model=self._model_name
                     )
                     query_vector = response.data[0].embedding
-
-
-                    
-                    #query_vector = embeddings.embed_query(query)
                 elif actual_vector_size == 384:
                     # Legacy: Collection uses 384D vectors (old SentenceTransformer setup)
-                    logger.warning("⚠ Collection uses 384D vectors - expected 3072D. Please re-index your collection.")
-                    logger.error("❌ Vector size mismatch! Expected 1536D, got 384D")
+                    logger.warning("⚠ Collection uses 384D vectors - expected 768D. Please re-index your collection.")
+                    logger.error(f"❌ Vector size mismatch! Expected 768D, got 384D")
                     return []
                 elif actual_vector_size == 3072:
+                    # Legacy: Collection uses 3072D vectors (old OpenAI setup)
+                    logger.warning("⚠ Collection uses 3072D vectors - expected 768D. Please re-index your collection.")
+                    logger.error(f"❌ Vector size mismatch! Expected 768D, got 3072D")
+                    return []
+                elif actual_vector_size == 1536:
                     # Legacy: Collection uses 1536D vectors (old OpenAI setup)
-                    logger.warning("⚠ Collection uses 1536D vectors.")
-                    logger.error("❌ Vector size mismatch! Expected 1536D, got D3072")
+                    logger.warning("⚠ Collection uses 1536D vectors - expected 768D. Please re-index your collection.")
+                    logger.error(f"❌ Vector size mismatch! Expected 768D, got 1536D")
                     return []
                 else:
-                    logger.error(f"❌ Unsupported vector size: {actual_vector_size}D. Expected 3072.")
+                    logger.error(f"❌ Unsupported vector size: {actual_vector_size}D. Expected 768D.")
                     return []
                 
                 logger.info(f"✓ Query vector generated: {len(query_vector)}D")
@@ -336,7 +345,7 @@ class VectorStore:
             
             # Extract text from payload – prefer full text, then snippet/citation
             payload = point.payload or {}
-            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation"))        or ""
+            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation")) or ""
             
             doc_type = "reddit_post"
             
@@ -402,7 +411,7 @@ class VectorStore:
             
             # Extract text from payload – prefer full text, then snippet/citation
             payload = point.payload or {}
-            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation"))        or ""
+            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation")) or ""
             
             doc_type = "youtube_summary"
             
@@ -450,9 +459,7 @@ class VectorStore:
         
         logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
         return documents
-        
 
-        return []
     def search_podcast_summaries(self, query: str, k: int = 3) -> List[Document]:
         search_results_points = self.search_doc_type(query, k, "podcast_summary")
 
@@ -464,7 +471,7 @@ class VectorStore:
             
             # Extract text from payload – prefer full text, then snippet/citation
             payload = point.payload or {}
-            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation"))        or ""
+            text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation")) or ""
             
             doc_type = "podcast_summary"
             
@@ -512,9 +519,6 @@ class VectorStore:
         
         logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
         return documents
-        
-
-        return []
 
     def clear_user_collection(self, user_id: int) -> bool:
         """Delete a user's collection from local Qdrant."""
@@ -546,9 +550,9 @@ class VectorStore:
             if self.embeddings is None:
                 logger.error("Embeddings not initialized")
                 return False
-            print("text:", text)
+            logger.debug(f"Generating embedding for text: {text[:100]}...")
             vector = self.embeddings.embed_query(text)
-            logger.debug("✓ Vector generated: " + text)
+            logger.debug(f"✓ Vector generated: {len(vector)}D")
 
             # Generate unique ID
             # If metadata["id"] is already a UUID string, use it directly; otherwise hash it

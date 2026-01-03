@@ -8,19 +8,26 @@ import logging
 import re
 import json
 import tiktoken
-import smtplib
-import ssl
-from email.message import EmailMessage
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import base64
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 load_dotenv()   
 
 
 # Define email sender and receiver
 sender_email = os.getenv("GOOGLE_APP_MAIL")
 receiver_email = "ansora.tech@gmail.com;avner.fr@gmail.com" # Can be a list of emails
-app_password = os.getenv("GOOGLE_APP_PASSWORD") # Use the generated App Password
+# Gmail API OAuth2 credentials
+gmail_client_id = os.getenv("GMAIL_CLIENT_ID")
+gmail_client_secret = os.getenv("GMAIL_CLIENT_SECRET")
+gmail_refresh_token = os.getenv("GMAIL_REFRESH_TOKEN")
 
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
 # Configure logging
@@ -781,12 +788,13 @@ async def process_rag(
     company_name: str | None = None,
     company_analysis: str | None = None,
     competition_analysis: str | None = None,
-) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
+    is_administrator: bool = False,
+) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str, str]:
     """
-    Process RAG pipeline and return refined text, sources, retrieved documents, and final prompt.
+    Process RAG pipeline and return refined text, sources, retrieved documents, final prompt, and email content.
 
     Returns:
-        tuple: (refined_text, sources_list, retrieved_docs_list, final_prompt)
+        tuple: (refined_text, sources_list, retrieved_docs_list, final_prompt, email_content)
     """
     logger.info(f"=== Starting RAG Pipeline ===")
     logger.info(f"User ID: {user_id}")
@@ -861,62 +869,157 @@ async def process_rag(
 
     logger.info("=== RAG Pipeline Completed Successfully ===")
     
-    # Send email notification (non-blocking - don't fail pipeline if email fails)
-    send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
-     company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, prompt, refined_text, sources, retrieved_docs)
-
+    # Build email content (always build, but only send if administrator)
+    email_content = ""
+    try:
+        email_sent, email_content = send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
+                                               company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                                               prompt, refined_text, sources, retrieved_docs, send=is_administrator)
+        if is_administrator:
+            if email_sent:
+                logger.info("Email sent successfully to administrators")
+            else:
+                logger.warning("Failed to send email to administrators")
+    except Exception as e:
+        logger.error(f"Email processing failed (non-critical): {e}", exc_info=True)
+        # Still build email content even if sending fails
+        try:
+            email_content = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
+                                                company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context,
+                                                prompt, refined_text, sources, retrieved_docs)
+        except Exception as e2:
+            logger.error(f"Failed to build email content: {e2}", exc_info=True)
     
-    return refined_text, sources, retrieved_docs_formatted, prompt
+    return refined_text, sources, retrieved_docs_formatted, prompt, email_content
+
+def get_gmail_service():
+    """Get authenticated Gmail API service instance."""
+    if not all([gmail_client_id, gmail_client_secret, gmail_refresh_token]):
+        logger.error("Gmail API credentials not fully configured")
+        return None
+    
+    try:
+        # Create credentials from refresh token
+        creds = Credentials(
+            token=None,
+            refresh_token=gmail_refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=gmail_client_id,
+            client_secret=gmail_client_secret
+        )
+        
+        # Refresh the token if needed
+        if creds.expired:
+            creds.refresh(Request())
+        
+        # Build the Gmail service
+        service = build('gmail', 'v1', credentials=creds)
+        return service
+    except Exception as e:
+        logger.error(f"Failed to create Gmail service: {e}", exc_info=True)
+        return None
+
+
+def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template, 
+                        company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                        prompt, refined_text, sources, retrieved_docs):
+    """Build email content string. Returns the email body as a string."""
+    # Build email content
+    email_body = f"User ID: {user_id}"
+    email_body += f"\nContext: {marketing_text}"
+    email_body += f"\nAsset Type: {asset_type}"
+    email_body += f"\nTarget Audience: {icp}"        
+    email_body += f"\nPain Points : {backgrounds}"
+    email_body += f"\nCompany Name: {company_name}"
+    email_body += f"\n\n------------------------------------------------\n"
+    
+    # Handle company_analysis - extract JSON if present, otherwise use raw text
+    if company_analysis:
+        try:
+            match = re.search(r'```json(.*)```', company_analysis, re.DOTALL)
+            if match:
+                json_str = match.group(1)
+                json_data = json.loads(json_str)
+                email_body += f"\nCompany Analysis:\n{json.dumps(json_data, indent=4)}"
+            else:
+                email_body += f"\nCompany Analysis:\n{company_analysis}"
+        except (AttributeError, json.JSONDecodeError) as e:
+            logger.warning(f"Could not parse company_analysis as JSON: {e}, using raw text")
+            email_body += f"\nCompany Analysis:\n{company_analysis}"
+    else:
+        email_body += f"\nCompany Analysis: Not available"
+    
+    email_body += f"\n\n------------------------------------------------\n"
+    email_body += f"\nCompetition Analysis:\n{competition_analysis if competition_analysis else 'Not available'}"
+    email_body += f"\n\n------------------------------------------------\n"
+    email_body += f"\nRetrieval Prompt:\n{retrieval_prompt}"
+    email_body += f"\n\n------------------------------------------------\n"
+    email_body += f"\nRetrieval Query:\n{retrieval_query}"
+    email_body += f"\n\n------------------------------------------------\n"
+    email_body += f"\nVector Search Results:\n{vector_search_context}"
+    email_body += f"\n\n------------------------------------------------\n"
+    email_body += f"\nAsset Creation Prompt:\n{prompt}"
+    email_body += f"\n\n------------------------------------------------\n"
+    email_body += f"\nAsset Creation Result:\n{refined_text}"
+    email_body += f"\n\n------------------------------------------------\n"
+    
+    return email_body
+
 
 def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template, 
                 company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
-                prompt, refined_text, sources, retrieved_docs):
-    """Send email notification. Returns True if successful, False otherwise."""
-    if not sender_email or not app_password:
-        logger.warning("Email credentials not configured, skipping email send")
-        return False
-
+                prompt, refined_text, sources, retrieved_docs, send: bool = True):
+    """Send email notification using Gmail API. Returns (success: bool, email_content: str)."""
+    logger.info(f"Attempting to send email notification via Gmail API...")
+    logger.info(f"Sender email configured: {bool(sender_email)}")
+    logger.info(f"Gmail API credentials configured: client_id={bool(gmail_client_id)}, client_secret={bool(gmail_client_secret)}, refresh_token={bool(gmail_refresh_token)}")
+    
+    # Build email content
+    email_body = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
+                                     company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context,
+                                     prompt, refined_text, sources, retrieved_docs)
+    
+    # If not sending, just return the content
+    if not send:
+        return False, email_body
+    
+    if not sender_email:
+        logger.warning(f"Sender email not configured")
+        return False, email_body
+    
+    if not all([gmail_client_id, gmail_client_secret, gmail_refresh_token]):
+        logger.warning(f"Gmail API credentials not fully configured")
+        return False, email_body
 
     try:
-  
-        email = f"User ID: {user_id}"
-        email += f"\nContext: {marketing_text}"
-        email += f"\nAsset Type: {asset_type}"
-        email += f"\nTarget Audience: {icp}"        
-        email += f"\nPain Points : {backgrounds}"
-        email += f"\nCompany Name: {company_name}"
-        email += f"\n\n------------------------------------------------\n"
-        str =  re.search(r'```json(.*)```', company_analysis, re.DOTALL).group(1)
-        json_data = json.loads(str)
-        email += f"\nCompany Analysis:\n{json.dumps(json_data, indent=4)}"
-        email += f"\n\n------------------------------------------------\n"
-        email += f"\nCompetition Analysis:\n{competition_analysis}"
-        email += f"\n\n------------------------------------------------\n"
-        email += f"\nRetrieval Prompt:\n{retrieval_prompt}"
-        email += f"\n\n------------------------------------------------\n"
-        email += f"\nRetrieval Query:\n{retrieval_query}"
-        email += f"\n\n------------------------------------------------\n"
-        email += f"\nVector Search Results:\n{vector_search_context}"
-        email += f"\n\n------------------------------------------------\n"
-        email += f"\nAsset Creation Prompt:\n{prompt}"
-        email += f"\n\n------------------------------------------------\n"
-        email += f"\nAsset Creation Result:\n{refined_text}"
-        email += f"\n\n------------------------------------------------\n"
-
-
-        logger.info(f"Sending email to {receiver_email}")
-        msg = EmailMessage()
-        msg.set_content(email)
-        msg['Subject'] = f"RAG Pipeline Completed Successfully - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        msg['From'] = sender_email
-        msg['To'] = receiver_email
+        # Parse receiver emails (handle semicolon-separated list)
+        receiver_list = [email.strip() for email in receiver_email.split(';') if email.strip()]
         
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465, context=context) as server:
-            server.login(sender_email, app_password)
-            server.send_message(msg)
-        logger.info("Email sent successfully")
-        return True
+        # Create the email message
+        message = MIMEMultipart()
+        message['From'] = sender_email
+        message['To'] = ', '.join(receiver_list)
+        message['Subject'] = f"RAG Pipeline Completed Successfully - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        message.attach(MIMEText(email_body, 'plain'))
+        
+        # Encode the message
+        raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+        
+        # Get Gmail service and send
+        service = get_gmail_service()
+        if not service:
+            logger.error("Failed to get Gmail service")
+            return False, email_body
+        
+        logger.info(f"Sending email from {sender_email} to {receiver_list}")
+        send_message = {'raw': raw_message}
+        result = service.users().messages().send(userId='me', body=send_message).execute()
+        logger.info(f"Email sent successfully to {len(receiver_list)} recipient(s). Message ID: {result.get('id')}")
+        return True, email_body
+        
+    except HttpError as e:
+        logger.error(f"Gmail API error while sending email: {e}", exc_info=True)
+        return False, email_body
     except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-        return False
+        logger.error(f"Failed to send email notification: {e}", exc_info=True)
+        return False, email_body

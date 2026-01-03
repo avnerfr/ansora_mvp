@@ -183,6 +183,12 @@ async def process_marketing_material(
             detail="At least one background must be selected"
         )
     
+    # Check if user is administrator
+    token = credentials.credentials
+    groups = get_cognito_groups_from_token(token)
+    is_administrator = 'Administrators' in groups
+    logger.info(f"User is administrator: {is_administrator}")
+    
     # Determine company name
     company_name = None
     if request.company:
@@ -191,8 +197,6 @@ async def process_marketing_material(
         logger.info(f"Using company from request (admin): {company_name}")
     else:
         # Get company from Cognito groups (non-admin users)
-        token = credentials.credentials
-        groups = get_cognito_groups_from_token(token)
         # Filter out Administrators group
         company_groups = [g for g in groups if g != 'Administrators']
         if company_groups:
@@ -258,7 +262,7 @@ async def process_marketing_material(
     # Process RAG
     try:
         logger.info("Calling RAG pipeline...")
-        refined_text, sources, retrieved_docs, final_prompt = await process_rag(
+        refined_text, sources, retrieved_docs, final_prompt, email_content = await process_rag(
             user_id=current_user.id,
             backgrounds=request.backgrounds,
             marketing_text=request.marketing_text,
@@ -268,6 +272,7 @@ async def process_marketing_material(
             company_name=company_name,
             company_analysis=company_analysis,
             competition_analysis=competition_analysis,
+            is_administrator=is_administrator,
         )
         logger.info(f"✓ RAG pipeline completed - Output: {len(refined_text)} chars, Sources: {len(sources)}, Retrieved Docs: {len(retrieved_docs)}")
     except Exception as e:
@@ -291,6 +296,7 @@ async def process_marketing_material(
             sources=[s.model_dump() if hasattr(s, 'model_dump') else s for s in sources],
             retrieved_docs=retrieved_docs,
             final_prompt=final_prompt,
+            email_content=email_content if is_administrator else None,  # Only store for administrators
             original_request=request.marketing_text,
             topics=request.backgrounds
         )
@@ -309,7 +315,8 @@ async def process_marketing_material(
 async def get_results(
     job_id: str,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Get RAG processing results."""
     job = db.query(Job).filter(Job.job_id == job_id).first()
@@ -356,12 +363,18 @@ async def get_results(
         # Return empty sources list if there's an error
         sources = []
     
+    # Check if current user is administrator for email_content
+    token = credentials.credentials
+    groups = get_cognito_groups_from_token(token)
+    is_administrator = 'Administrators' in groups
+    
     return RAGResultResponse(
         job_id=job.job_id,
         refined_text=job.refined_text,
         sources=sources,
         retrieved_docs=job.retrieved_docs or [],
         final_prompt=job.final_prompt,
+        email_content=job.email_content if is_administrator else None,  # Only return for administrators
         original_request=job.original_request,
         topics=job.topics
     )

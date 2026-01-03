@@ -59,6 +59,13 @@ def migrate_database():
         else:
             print("final_prompt column already exists")
 
+        # Add email_content column if it doesn't exist
+        if 'email_content' not in columns:
+            print("Adding email_content column to jobs table...")
+            cursor.execute("ALTER TABLE jobs ADD COLUMN email_content TEXT")
+        else:
+            print("email_content column already exists")
+
         conn.commit()
         print("Migration completed successfully!")
 
