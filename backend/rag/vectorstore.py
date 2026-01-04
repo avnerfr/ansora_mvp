@@ -367,12 +367,12 @@ class VectorStore:
             # Search using direct Qdrant client API
             logger.info(f"Performing similarity search with k={k} ")
 
-            logger.info(f"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
-            logger.info(f"company_enumerations: {company_enumerations}")
-            logger.info(f"company_enumerations.get('domain'): {company_enumerations.get('domain')}")
-            logger.info(f"company_enumerations.get('operational_surface'): {company_enumerations.get('operational_surface')}")
-            logger.info(f"company_enumerations.get('execution_surface'): {company_enumerations.get('execution_surface')}")
-            logger.info(f"company_enumerations.get('failure_type'): {company_enumerations.get('failure_type')}")
+            #logger.info(f"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+            #logger.info(f"company_enumerations: {company_enumerations}")
+            #logger.info(f"company_enumerations.get('domain'): {company_enumerations.get('domain')}")
+            #logger.info(f"company_enumerations.get('operational_surface'): {company_enumerations.get('operational_surface')}")
+            #logger.info(f"company_enumerations.get('execution_surface'): {company_enumerations.get('execution_surface')}")
+            #logger.info(f"company_enumerations.get('failure_type'): {company_enumerations.get('failure_type')}")
 
 
             logger.info(f"###########  After reload must change the code here ###########")
@@ -439,14 +439,14 @@ class VectorStore:
         # Convert Qdrant results to LangChain Documents
         documents = []
         for i, point in enumerate(search_results_points, 1):
-            # Log the payload to see what fields are available
-            #logger.info(f"Point {i} payload keys: {list(point.payload.keys())}")
-            
             # Extract text from payload – prefer full text, then snippet/citation
             payload = point.payload or {}
             text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation")) or ""
             
             doc_type = "reddit_post"
+            
+            # Get post_id from payload - try multiple possible field names
+            post_id = payload.get("post_id") or payload.get("id")
             
             # Build metadata with all available fields (use None instead of "Unknown" for optional fields)
             metadata = {
@@ -467,6 +467,7 @@ class VectorStore:
                 'url': payload.get("thread_url"),
                 'thread_author': payload.get("thread_author"),
                 'subreddit': payload.get("subreddit"),
+                'post_id': post_id,  # Add post_id for duplicate filtering
 
                 'citation_start_time': payload.get("citation_start_time"),
                 'icp_role_type': payload.get("icp_role_type"),
@@ -476,6 +477,9 @@ class VectorStore:
                 "date_created_utc": payload.get("date_created_utc"),
                 "flair_text": payload.get("flair_text"),
             }
+            
+            # Debug logging for post_id
+            logger.debug(f"Reddit post {i}: post_id={post_id}, title={payload.get('title', 'N/A')[:50]}")
 
 
             # Generate appropriate filename based on doc_type

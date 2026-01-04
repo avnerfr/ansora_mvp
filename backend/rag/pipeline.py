@@ -41,26 +41,85 @@ logging.basicConfig(
 
 asset_type_rules = {
 "email": """
-Theme: Identify a broad operational struggle from INSIGHTS_JSON.
+Theme
+Name the recurring operational struggle, not the category.
 
-Subject (1 line, ≤10 words): Focus on a technical gap or operational pain.
+Example format:
+“Making changes without knowing what will break later”
 
-Opening (Hook, 2 sentences max):
-Start with a visceral observation about the gap between theory and messy operational reality.
-Embed 1-2 pain_phrases naturally.
-Keep it short and punchy; do not pre-solve.
-Max 15 words per sentence.
+Subject (≤10 words)
 
-Body (Exactly 3 bullets, natural prose):
-Bullet 1 - Whether/Or framework: Connect 2-3 key_issues. Use pain_phrases naturally. Keep ≤15 words per sentence.
-Bullet 2 - Operational friction: Describe systemic consequence in buyer_language. Show frustration, inefficiency, or blind spots.
-Bullet 3 - AlgoSec Logic Map: Show operational clarity or improvement. Keep peer-to-peer tone, neutral, no marketing language.
+Describe the gap between expectation and reality.
+Use buyer language if possible.
 
-CTA (1 sentence, ≤15 words):
-Short, operational, friendly, neutral.
-Example: “Let’s have a quick chat to navigate this policy maze.”
+Examples:
+“Approved changes that don’t behave as expected”
+“The part everyone finds after the incident”
 
+Opening (Hook – max 2 sentences, ≤15 words each)
 
+Purpose: create recognition, not explain.
+
+Rules:
+
+Describe what should happen vs what actually happens.
+
+Embed 1 buyer phrase naturally.
+
+No causes. No fixes.
+
+Structure:
+
+Sentence 1: expectation
+
+Sentence 2: operational reality
+
+Body (Exactly 3 bullets)
+Bullet 1 – Whether / Or tension
+Purpose: show the decision trap, not the choice.
+
+Rules:
+Connect 2–3 aspects of the same pain.
+Use uncertainty, tradeoffs, or ambiguity.
+No judgment.
+Feels like:
+“Either we do X and risk Y, or we avoid X and accept Z.”
+
+Bullet 2 – Systemic operational consequence
+Purpose: show what this pain forces teams to live with over time.
+
+Rules (very strict):
+Describe repeated behavior: chasing, rechecking, second-guessing, backtracking.
+Only buyer language. No abstractions.
+No mention of what’s missing.
+No implied solution.
+
+Mental test:
+If you remove Bullet 3, Bullet 2 should still feel complete and heavy.
+
+Bullet 3 – Changed operating reality (pre-decision clarity)
+Purpose: describe how work feels when fewer unknowns exist before acting.
+
+Rules:
+Observational only.
+Same team, same constraints.
+Focus on pace, confidence, fewer surprises — without naming why.
+No tools, no methods, no concepts.
+
+Think:
+“This is how the day goes when you’re not guessing.”
+
+CTA (1 sentence, ≤15 words)
+Purpose: invite peer conversation, not action.
+
+Rules:
+Neutral.
+Operational.
+No verbs like “learn”, “see”, “discover”.
+
+Example formats:
+“Curious how you deal with this today.”
+“Worth comparing notes sometime.”
 """,
 "one-pager": """
 headline:
@@ -353,6 +412,14 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str, max_do
     merged_docs: list[Any] = []
     seen_values: set[str] = set()
 
+    # Debug: log sample of merger_by values
+    sample_values = []
+    for doc in docs[:5]:  # Check first 5 docs
+        metadata = doc.metadata if hasattr(doc, "metadata") else {}
+        raw_value = metadata.get(merger_by)
+        sample_values.append(str(raw_value) if raw_value is not None else "None")
+    logger.info(f"Sample {merger_by} values (first 5): {sample_values}")
+
     for doc in docs:
         metadata = doc.metadata if hasattr(doc, "metadata") else {}
         raw_value = metadata.get(merger_by)
@@ -361,16 +428,18 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str, max_do
         value_str = str(raw_value) if raw_value is not None else ""
 
         if value_str in seen_values:
+            logger.debug(f"Skipping duplicate {merger_by}={value_str}")
             continue
 
         seen_values.add(value_str)
         merged_docs.append(doc)
 
-    logger.info("After merge/filter by '%s': %d → %d", merger_by, len(docs), len(merged_docs))
+    logger.info("After merge/filter by '%s': %d → %d (unique values: %d)", merger_by, len(docs), len(merged_docs), len(seen_values))
     #sort the merged_docs by the score in descending order
     merged_docs = sorted(merged_docs, key=lambda x: x.metadata.get('score', 0), reverse=True)
     # leave the top 10 documents with the highest score
     merged_docs = merged_docs[:max_docs]
+    logger.info("After sorting and limiting to %d: %d docs", max_docs, len(merged_docs))
 
     return merged_docs
 
@@ -484,7 +553,7 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
         response = s3.get_object(Bucket='ansora-company-enumerations', Key=key)
         company_enumerations = json.loads(response['Body'].read().decode('utf-8'))
 
-        logger.info(f"Company enumerations: {company_enumerations}")
+        #logger.info(f"Company enumerations: {company_enumerations}")
 
 
         for chunk in retrieval_query_chunks:
@@ -495,7 +564,12 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
 
 
  
-        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "post_id",10)    #extract a vector of json from the reddit_docs
+        # For Reddit, use post_id if available, otherwise fall back to url
+        # Check if post_id exists in any doc
+        use_post_id = any(hasattr(doc, 'metadata') and doc.metadata.get('post_id') for doc in reddit_docs[:5]) if reddit_docs else False
+        merger_field = "post_id" if use_post_id else "url"
+        logger.info(f"Using '{merger_field}' field for Reddit duplicate filtering")
+        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, merger_field, 10)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
 
