@@ -322,10 +322,18 @@ class VectorStore:
             logger.info(f"company_enumerations: {company_enumerations}")
             logger.info(f"company_enumerations.get('domain'): {company_enumerations.get('domain')}")
             logger.info(f"company_enumerations.get('operational_surface'): {company_enumerations.get('operational_surface')}")
-            logger.info(f"company_enumerations.get('security_control_surface'): {company_enumerations.get('security_control_surface')}")
+            logger.info(f"company_enumerations.get('execution_surface'): {company_enumerations.get('execution_surface')}")
             logger.info(f"company_enumerations.get('failure_type'): {company_enumerations.get('failure_type')}")
 
-            search_results = self.client.query_points(
+
+            logger.info(f"###########  After reload must change the code here ###########")
+            logger.info(f"###########  After reload must change the code here ###########")
+            logger.info(f"###########  After reload must change the code here ###########")
+            logger.info(f"###########  After reload must change the code here ###########")
+            logger.info(f"###########  After reload must change the code here ###########")
+            logger.info(f"###########  After reload must change the code here ###########")
+
+            search_results_old = self.client.query_points(
                 collection_name=collection_name_to_use,
                 query=query_vector,
                 limit=k,
@@ -336,13 +344,42 @@ class VectorStore:
                     must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type)),
                         FieldCondition(key="domain", match=MatchAny(any=company_enumerations.get("domain", []))),
                         FieldCondition(key="operational_surface", match=MatchAny(any=company_enumerations.get("operational_surface", []))),
-                        FieldCondition(key="security_control_surface", match=MatchAny(any=company_enumerations.get("security_control_surface", []))),
+                        FieldCondition(key="security_control_surface", match=MatchAny(any=company_enumerations.get("execution_surface", []))),
                         FieldCondition(key="failure_type", match=MatchAny(any=company_enumerations.get("failure_type", [])))
                     ]
                 ),
             )
-            logger.info(f"✓ Search completed: {len(search_results.points)} results")
-            return search_results.points
+            search_results_new = self.client.query_points(
+                collection_name=collection_name_to_use,
+                query=query_vector,
+                limit=k,
+                with_payload=True,
+                with_vectors=False,
+
+                query_filter=Filter(
+                    must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type)),
+                        FieldCondition(key="domain", match=MatchAny(any=company_enumerations.get("domain", []))),
+                        FieldCondition(key="operational_surface", match=MatchAny(any=company_enumerations.get("operational_surface", []))),
+                        FieldCondition(key="execution_surface", match=MatchAny(any=company_enumerations.get("execution_surface", []))),
+                        FieldCondition(key="failure_type", match=MatchAny(any=company_enumerations.get("failure_type", [])))
+                    ]
+                ),
+            )
+            
+            # Combine points from both responses, deduplicate by ID, and sort by score
+            combined_points = {}
+            for point in search_results_old.points:
+                combined_points[point.id] = point
+            for point in search_results_new.points:
+                # Keep the point with higher score if duplicate
+                if point.id not in combined_points or point.score > combined_points[point.id].score:
+                    combined_points[point.id] = point
+            
+            # Sort by score descending and limit to k
+            sorted_points = sorted(combined_points.values(), key=lambda p: p.score, reverse=True)[:k]
+            
+            logger.info(f"✓ Search completed: {len(sorted_points)} results (combined from {len(search_results_old.points)} + {len(search_results_new.points)} points)")
+            return sorted_points
         except Exception as e:
             logger.error(f"❌ Error searching Documents: {type(e).__name__}: {str(e)}", exc_info=True)
             return []

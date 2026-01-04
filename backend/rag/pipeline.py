@@ -495,7 +495,7 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
 
 
  
-        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "url",10)    #extract a vector of json from the reddit_docs
+        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, "post_id",10)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
 
