@@ -98,7 +98,21 @@ You must perform the following steps BEFORE generating any asset:
 If supporting language conflicts with or expands the primary insight,
 it MUST be excluded.
 
+OUTPUT REQUIRED BEFORE ASSET GENERATION:
 
+Primary Insight (one sentence):
+<the single operational failure this asset is about>
+
+Included Supporting Phrases:
+- <phrase 1>
+- <phrase 2>
+- <phrase 3>
+
+Excluded Themes (must be ignored in asset):
+- <theme 1>
+- <theme 2>
+
+The final asset MUST strictly adhere to the Primary Insight above.
 
 ---------------------------------------------------------------
 OUTPUT

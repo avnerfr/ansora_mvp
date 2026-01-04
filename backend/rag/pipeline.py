@@ -588,7 +588,7 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
                 source = "reddit"
                 url = doc_url
                 thread_url = doc_url  # For frontend compatibility
-            elif doc_type == "youtube_summary":
+            elif doc_type == "yt_summary":
                 source = "youtube"
                 url = doc_url
                 video_url = doc_url  # For frontend compatibility
@@ -657,7 +657,7 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
             # Add type-specific URL fields for frontend compatibility
             if doc_type == "reddit_post":
                 source_obj["thread_url"] = thread_url
-            elif doc_type == "youtube_summary":
+            elif doc_type == "yt_summary":
                 source_obj["video_url"] = video_url
                 source_obj["citation_start_time"] = citation_start_time
             elif doc_type == "podcast_summary":
