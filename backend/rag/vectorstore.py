@@ -16,6 +16,8 @@ from langchain_text_splitters import (RecursiveCharacterTextSplitter, CharacterT
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+import json
+from rag.s3_utils import get_latest_company_file
 load_dotenv()
 
 
@@ -222,7 +224,7 @@ class VectorStore:
 
 
     
-    def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post", company_enumerations: List[str] = []) -> List[Document]:
+    def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post", company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
             logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}")
@@ -234,15 +236,62 @@ class VectorStore:
             logger.info(f"Available collections in cloud Qdrant: {collection_names}")
             
             # Use the unified summaries collection
-            collection_name_to_use = os.getenv("SUMMARIES_COLLECTION_NAME")
+            collection_name_to_use = None# os.getenv("SUMMARIES_COLLECTION_NAME")
             
-            # If not set, try to auto-detect from available collections
+
+            
+            # If not set, try to get company domain and construct collection name
             if not collection_name_to_use:
-                # Prefer cybersecurity-summaries_1_0 if available, otherwise use any summaries collection
-                if 'cybersecurity-summaries_1_0' in collection_names:
-                    collection_name_to_use = 'cybersecurity-summaries_1_0'
-                    logger.info(f"Auto-detected collection: {collection_name_to_use} (default)")
+                company_domain = None
+                if company_name:
+                    logger.info(f"Attempting to get company domain for: {company_name}")
+                    try:
+                        # Get company information from S3 to extract domain
+                        company_file = get_latest_company_file(company_name)
+                        if company_file and 'data' in company_file:
+                            company_data = company_file['data']
+                            company_analysis = company_data.get('company_analysis', '')
+                            if company_analysis:
+                                try:
+                                    # Try to extract JSON from company_analysis
+                                    json_match = re.search(r'```json\s*(.*?)\s*```', company_analysis, re.DOTALL)
+                                    if json_match:
+                                        company_json = json.loads(json_match.group(1).strip())
+                                        company_domain = company_json.get('company_domain', '')
+                                        logger.info(f"Extracted company_domain from JSON block: {company_domain}")
+                                    else:
+                                        # Try parsing as direct JSON
+                                        company_json = json.loads(company_analysis)
+                                        company_domain = company_json.get('company_domain', '')
+                                        logger.info(f"Extracted company_domain from direct JSON: {company_domain}")
+                                except (json.JSONDecodeError, AttributeError) as e:
+                                    logger.warning(f"Error parsing company_analysis for {company_name}: {e}")
+                            else:
+                                logger.warning(f"No company_analysis found in company file for {company_name}")
+                        else:
+                            logger.warning(f"No company file found for {company_name}")
+                    except Exception as e:
+                        logger.warning(f"Error getting company file for {company_name}: {e}", exc_info=True)
                 else:
+                    logger.info("No company_name provided, will use auto-detection")
+                
+                # Construct collection name based on domain
+                if company_domain:
+                    # Normalize domain: lowercase, replace spaces with underscores
+                    domain_normalized = company_domain.lower().replace(' ', '_')
+                    collection_name_to_use = f"{domain_normalized}-summaries_1_0"
+                    logger.info(f"✓ Using collection based on company domain: {collection_name_to_use} (domain: {company_domain}, normalized: {domain_normalized})")
+                    
+                    # Check if the domain-based collection exists
+                    if collection_name_to_use not in collection_names:
+                        logger.warning(f"⚠ Domain-based collection '{collection_name_to_use}' not found. Available collections: {collection_names}")
+                        # Still use the domain-based name - don't fall back to generic collections
+                        # This ensures we always use the domain format when domain is available
+                else:
+                    logger.info("No company domain found, will use auto-detection")
+                
+                # Only fall back to auto-detection if no domain was found
+                if not collection_name_to_use:
                     # Try to find any summaries collection (prefer newer versions)
                     summaries_collections = [name for name in collection_names if 'summaries' in name.lower()]
                     if summaries_collections:
@@ -384,8 +433,8 @@ class VectorStore:
             logger.error(f"❌ Error searching Documents: {type(e).__name__}: {str(e)}", exc_info=True)
             return []
             
-    def search_reddit_posts(self, query: str, k: int = 3, company_enumerations: List[str] = []) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "reddit_post", company_enumerations)
+    def search_reddit_posts(self, query: str, k: int = 3, company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "reddit_post", company_enumerations, company_name)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -450,8 +499,8 @@ class VectorStore:
         
 
     
-    def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = []) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "youtube_summary", company_enumerations)
+    def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "youtube_summary", company_enumerations, company_name)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -510,8 +559,8 @@ class VectorStore:
         logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
         return documents
 
-    def search_podcast_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = []) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "podcast_summary", company_enumerations)
+    def search_podcast_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "podcast_summary", company_enumerations, company_name)
 
         # Convert Qdrant results to LangChain Documents
         documents = []

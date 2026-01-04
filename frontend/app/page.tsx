@@ -6,18 +6,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Navbar } from '@/components/Navbar'
 import { TextArea } from '@/components/TextArea'
 import { Button } from '@/components/Button'
+import { Dialog } from '@/components/Dialog'
 import { ragAPI } from '@/lib/api'
-import { isAuthenticated, isAdmin } from '@/lib/auth'
-
-const USE_CASE_OPTIONS = [
-  'Afraid to push a network change without knowing what will break',
-  'Security changes get stuck in CAB because no one can prove safety',
-  'Cannot verify that network policies actually work as intended',
-  'Rules accumulated over time that nobody understands or owns',
-  'Afraid to remove access because the real dependencies are unknown',
-  'Cloud and on-prem environments behave differently under the same policy',
-  'Audits fail because policy intent cannot be proven',
-]
+import { isAuthenticated, isAdmin, getAuthToken } from '@/lib/auth'
 
 function HomePageContent() {
   const router = useRouter()
@@ -31,11 +22,95 @@ function HomePageContent() {
   const [icp, setIcp] = useState<string>('')
   const [selectedCompany, setSelectedCompany] = useState<string>('')
   const [isAdminUser, setIsAdminUser] = useState(false)
+  const [showCompanyDialog, setShowCompanyDialog] = useState(false)
   const [isUploadingContextDocs, setIsUploadingContextDocs] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [icpOptions, setIcpOptions] = useState<string[]>([])
+  const [isLoadingICPs, setIsLoadingICPs] = useState(false)
+  const [operationalPainOptions, setOperationalPainOptions] = useState<string[]>([])
+  const [isLoadingOperationalPains, setIsLoadingOperationalPains] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const COMPANY_OPTIONS = ['Algosec', 'CyberArk', 'JFrog', 'Cloudinary']
+  const COMPANY_OPTIONS = ['Algosec', 'CyberArk', 'JFrog', 'Cloudinary', 'Incredibuild']
+
+  // Define fetch functions before they're used in useEffect
+  const fetchICPsForCompany = async (companyName: string) => {
+    if (!companyName) return
+    
+    setIsLoadingICPs(true)
+    try {
+      const response = await ragAPI.getICPs(companyName)
+      if (response && response.icps) {
+        setIcpOptions(response.icps)
+      } else {
+        // Fallback to default ICPs
+        setIcpOptions([
+          "Network & Security Operations",
+          "Application & Service Delivery",
+          "CIO",
+          "CISO",
+          "Risk and Compliance"
+        ])
+      }
+    } catch (error) {
+      console.error('Error fetching ICPs:', error)
+      // Fallback to default ICPs on error
+      setIcpOptions([
+        "Network & Security Operations",
+        "Application & Service Delivery",
+        "CIO",
+        "CISO",
+        "Risk and Compliance"
+      ])
+    } finally {
+      setIsLoadingICPs(false)
+    }
+  }
+
+  const fetchOperationalPainsForCompany = async (companyName: string) => {
+    if (!companyName) return
+    
+    setIsLoadingOperationalPains(true)
+    try {
+      const response = await ragAPI.getOperationalPains(companyName)
+      if (response && response.operational_pains) {
+        setOperationalPainOptions(response.operational_pains)
+      } else {
+        // Fallback to default pain points
+        setOperationalPainOptions([
+          "Afraid to push a network change without knowing what will break",
+          "Security changes get stuck in CAB because no one can prove safety",
+          "Cannot verify that network policies actually work as intended",
+          "Rules accumulated over time that nobody understands or owns",
+          "Afraid to remove access because the real dependencies are unknown",
+          "Cloud and on-prem environments behave differently under the same policy",
+          "Audits fail because policy intent cannot be proven"
+        ])
+      }
+    } catch (error) {
+      console.error('Error fetching operational pain points:', error)
+      // Fallback to default pain points on error
+      setOperationalPainOptions([
+        "Afraid to push a network change without knowing what will break",
+        "Security changes get stuck in CAB because no one can prove safety",
+        "Cannot verify that network policies actually work as intended",
+        "Rules accumulated over time that nobody understands or owns",
+        "Afraid to remove access because the real dependencies are unknown",
+        "Cloud and on-prem environments behave differently under the same policy",
+        "Audits fail because policy intent cannot be proven"
+      ])
+    } finally {
+      setIsLoadingOperationalPains(false)
+    }
+  }
+
+  const fetchCompanyData = async (companyName: string) => {
+    // Fetch both ICPs and operational pain points in parallel
+    await Promise.all([
+      fetchICPsForCompany(companyName),
+      fetchOperationalPainsForCompany(companyName)
+    ])
+  }
 
   // Handle Cognito callback - if there's a code parameter, redirect to callback API
   useEffect(() => {
@@ -60,12 +135,44 @@ function HomePageContent() {
     
     // Check if user is admin
     if (token) {
-      setIsAdminUser(isAdmin())
+      const adminStatus = isAdmin()
+      setIsAdminUser(adminStatus)
+      // Show company selection dialog for admins if no company is selected
+      // Only show on initial load (when authChecked transitions from false to true)
+      if (adminStatus && !selectedCompany && !showCompanyDialog) {
+        setShowCompanyDialog(true)
+      } else if (!adminStatus) {
+        // For non-admin users, get company from Cognito groups and fetch ICPs
+        try {
+          const authToken = getAuthToken()
+          if (authToken) {
+            // Decode JWT payload to get groups
+            const payload = JSON.parse(atob(authToken.split('.')[1]))
+            const groups = payload['cognito:groups'] || []
+            console.log('Cognito groups:', groups)
+            // Filter out Administrators group
+            const companyGroups = groups.filter((g: string) => g !== 'Administrators')
+            console.log('Company groups:', companyGroups)
+            if (companyGroups.length > 0) {
+              const companyName = companyGroups[0]
+              console.log('Fetching data for company:', companyName)
+              fetchCompanyData(companyName)
+            } else {
+              console.warn('No company groups found for non-admin user')
+            }
+          } else {
+            console.warn('No auth token found for non-admin user')
+          }
+        } catch (error) {
+          console.error('Error extracting company from groups:', error)
+        }
+      }
     }
     
     if (!token) {
       router.push('/auth/login')
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, searchParams])
 
   const handleContextFilesSelected = async (files: File[]) => {
@@ -125,6 +232,13 @@ function HomePageContent() {
       return
     }
 
+    // For admins, ensure company is selected
+    if (isAdminUser && !selectedCompany.trim()) {
+      alert('Please select a company')
+      setShowCompanyDialog(true)
+      return
+    }
+
     setIsProcessing(true)
 
     try {
@@ -160,9 +274,70 @@ function HomePageContent() {
     )
   }
 
+  const handleCompanySelect = (company: string) => {
+    setSelectedCompany(company)
+    setShowCompanyDialog(false)
+    // Fetch ICPs and operational pain points for the selected company
+    if (company) {
+      fetchCompanyData(company)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Navbar />
+      
+      {/* Company Selection Dialog for Administrators */}
+      <Dialog
+        isOpen={showCompanyDialog}
+        onClose={() => {
+          // Only allow closing if a company is selected
+          if (selectedCompany) {
+            setShowCompanyDialog(false)
+          }
+        }}
+        title="Select Company"
+        showCloseButton={!!selectedCompany}
+        allowBackdropClose={!!selectedCompany}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Please select a company to continue.
+          </p>
+          <div>
+            <label
+              htmlFor="company-dialog"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
+              Company
+            </label>
+            <select
+              id="company-dialog"
+              value={selectedCompany}
+              onChange={(e) => handleCompanySelect(e.target.value)}
+              className="block w-full px-3 py-2 text-sm border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
+            >
+              <option value="">Select a company</option>
+              {COMPANY_OPTIONS.map((company) => (
+                <option key={company} value={company}>
+                  {company}
+                </option>
+              ))}
+            </select>
+          </div>
+          {selectedCompany && (
+            <div className="flex justify-end pt-2">
+              <Button
+                variant="primary"
+                onClick={() => setShowCompanyDialog(false)}
+              >
+                Continue
+              </Button>
+            </div>
+          )}
+        </div>
+      </Dialog>
+
       <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
         <div className="space-y-4">
           <div>
@@ -273,14 +448,17 @@ function HomePageContent() {
                     id="icp"
                     value={icp}
                     onChange={(e) => setIcp(e.target.value)}
-                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
+                    disabled={isLoadingICPs || icpOptions.length === 0}
+                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <option value="">Select</option>
-                    <option value="Network & Security Operations">Network & Security Operations</option>
-                    <option value="Application & Service Delivery">Application & Service Delivery</option>
-                    <option value="CIO">CIO</option>
-                    <option value="CISO">CISO</option>
-                    <option value="Risk and Complience">Risk and Complience</option>
+                    <option value="">
+                      {isLoadingICPs ? 'Loading...' : icpOptions.length === 0 ? 'Select company first' : 'Select'}
+                    </option>
+                    {icpOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -296,10 +474,13 @@ function HomePageContent() {
                     id="operationalPain"
                     value={selectedOperationalPain}
                     onChange={(e) => setSelectedOperationalPain(e.target.value)}
-                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
+                    disabled={isLoadingOperationalPains || operationalPainOptions.length === 0}
+                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <option value="">Select</option>
-                    {USE_CASE_OPTIONS.map((option) => (
+                    <option value="">
+                      {isLoadingOperationalPains ? 'Loading...' : operationalPainOptions.length === 0 ? 'Select company first' : 'Select'}
+                    </option>
+                    {operationalPainOptions.map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
@@ -307,30 +488,6 @@ function HomePageContent() {
                   </select>
                 </div>
 
-                {/* Company Selection - Only for Administrators */}
-                {isAdminUser && (
-                  <div>
-                    <label
-                      htmlFor="company"
-                      className="block text-xs font-medium text-slate-700 mb-1"
-                    >
-                      Company
-                    </label>
-                    <select
-                      id="company"
-                      value={selectedCompany}
-                      onChange={(e) => setSelectedCompany(e.target.value)}
-                      className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
-                    >
-                      <option value="">Select</option>
-                      {COMPANY_OPTIONS.map((company) => (
-                        <option key={company} value={company}>
-                          {company}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
               </section>
             </div>
           </div>
