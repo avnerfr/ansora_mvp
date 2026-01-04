@@ -227,14 +227,12 @@ class VectorStore:
     def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post", company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
-            logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}")
+            logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}, doc_type={doc_type}, company_name={company_name}")
             
             # Check if collection exists
-            logger.info("Connecting to cloud Qdrant...")
             collections = self.client.get_collections().collections
             collection_names = [c.name for c in collections]
-            logger.info(f"Available collections in cloud Qdrant: {collection_names}")
-            
+             
             # Use the unified summaries collection
             collection_name_to_use = None# os.getenv("SUMMARIES_COLLECTION_NAME")
             
@@ -244,7 +242,6 @@ class VectorStore:
             if not collection_name_to_use:
                 company_domain = None
                 if company_name:
-                    logger.info(f"Attempting to get company domain for: {company_name}")
                     try:
                         # Get company information from S3 to extract domain
                         company_file = get_latest_company_file(company_name)
@@ -313,7 +310,7 @@ class VectorStore:
                 # Access vector size - handle different Qdrant client versions
                 actual_vector_size = collection_info.config.params.vectors.size
                 points_count = getattr(collection_info, 'points_count', 0)
-                logger.info(f"Collection info: {points_count} points, {actual_vector_size}D vectors")
+                #logger.info(f"Collection info: {points_count} points, {actual_vector_size}D vectors")
             except Exception as e:
                 logger.error(f"❌ Error getting collection info: {type(e).__name__}: {str(e)}", exc_info=True)
                 return []
@@ -322,7 +319,7 @@ class VectorStore:
             try:
                 if actual_vector_size == 768:
                     # Collection uses BAAI/bge-base-en-v1.5 (768D)
-                    logger.info("Generating query embedding with BAAI/bge-base-en-v1.5")
+                    #logger.info("Generating query embedding with BAAI/bge-base-en-v1.5")
                     embeddings = self.embeddings  # OpenAI embeddings
                     if embeddings is None:
                         logger.error("❌ OpenAI embeddings not initialized!")
@@ -354,7 +351,7 @@ class VectorStore:
                     logger.error(f"❌ Unsupported vector size: {actual_vector_size}D. Expected 768D.")
                     return []
                 
-                logger.info(f"✓ Query vector generated: {len(query_vector)}D")
+                #logger.info(f"✓ Query vector generated: {len(query_vector)}D")
                 
                 # Verify vector size matches
                 if len(query_vector) != actual_vector_size:
@@ -365,7 +362,7 @@ class VectorStore:
                 return []
             
             # Search using direct Qdrant client API
-            logger.info(f"Performing similarity search with k={k} ")
+            #logger.info(f"Performing similarity search with k={k} ")
 
             #logger.info(f"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
             #logger.info(f"company_enumerations: {company_enumerations}")
@@ -504,7 +501,7 @@ class VectorStore:
 
     
     def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "youtube_summary", company_enumerations, company_name)
+        search_results_points = self.search_doc_type(query, k, "yt_summary", company_enumerations, company_name)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -516,7 +513,7 @@ class VectorStore:
             payload = point.payload or {}
             text = (payload.get("text") or payload.get("content") or payload.get("snippet") or payload.get("citation")) or ""
             
-            doc_type = "youtube_summary"
+            doc_type = "yt_summary"
             
             # Build metadata with all available fields (use None instead of "Unknown" for optional fields)
             metadata = {

@@ -70,6 +70,36 @@ using the following structure and formatting
 
 Use cases / key themes to prioritize: {backgrounds}
 
+
+INSIGHT SELECTION AND LANGUAGE AGGREGATION (MANDATORY STEP)
+
+You must perform the following steps BEFORE generating any asset:
+
+1. Primary Insight Selection
+- Select EXACTLY ONE primary operational insight.
+- The insight must represent the core failure or friction.
+- It must be stated as a single, concrete sentence.
+- Do NOT combine multiple problems.
+- Do NOT generalize beyond the evidence.
+
+2. Supporting Language Aggregation
+- You MAY aggregate pain phrases, emotional triggers, and buyer language
+  from multiple retrieved posts or insights.
+- Only include language that describes the SAME underlying problem.
+- All supporting phrases must reinforce the selected primary insight.
+- Do NOT introduce new failure types, domains, or operational surfaces.
+
+3. Narrative Constraint
+- All generated assets MUST:
+  - Be anchored to the single primary insight.
+  - Use aggregated language only to express urgency, emotion, or realism.
+  - Avoid introducing secondary pains or adjacent problems.
+
+If supporting language conflicts with or expands the primary insight,
+it MUST be excluded.
+
+
+
 ---------------------------------------------------------------
 OUTPUT
 ---------------------------------------------------------------
