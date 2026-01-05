@@ -813,15 +813,15 @@ def build_final_prompt(
 
 
     prompt = template.format(
-        backgrounds=backgrounds_str,
+        operational_pain_point=backgrounds_str,
         use_cases=backgrounds_str,
-        marketing_text=marketing_text,
+        campaing_context=marketing_text,
         context=marketing_text,
         user_provided_text=marketing_text,
         vector_search_context=vector_search_context,
         asset_type=asset_type or '',
         asset_type_instructions=asset_type_instructions,
-        icp=icp or '',
+        target_audience=icp or '',
         company_analysis=company_info,
         competition_analysis=competition_info,
         latest_anouncements=company_json.get('latest_anouncements'),
@@ -939,6 +939,7 @@ async def process_rag(
     # Step 3: Build vector search context
     vector_search_context = build_vector_search_context(retrieved_docs)
     logger.info(f"%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%marketing_text: {marketing_text}")
+    logger.info(f"%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%backgrounds_str: {backgrounds_str}")
     # Step 4: Build final prompt
     prompt = build_final_prompt(
         template=template,

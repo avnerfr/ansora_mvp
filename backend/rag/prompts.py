@@ -40,22 +40,24 @@ Use colloquial operational language from buyer_language/pain_phrases.
 INPUTS
 ----------------------------------------------------------------
 
+TARGET_AUDIENCE:
+{target_audience}
 
-ICP_ROLE:
-{icp}
+CAMPAIGN_CONTEXT (OPTIONAL):
+{campaing_context}
 
-PRIMARY_TOPIC:
-{marketing_text}
-
+OPERATIONAL_PAIN_POINT:
+{operational_pain_point}
 
 INSIGHTS_JSON (FROM RAG — MANDATORY):
 {vector_search_context}
 
+company's latest announcements are:
+{latest_anouncements}
+
 company's competitors are:
 {competition_analysis}
 
-company's latest announcements are:
-{latest_anouncements}
 
 You MUST ground all content in this INSIGHTS_JSON.
 Do NOT introduce concepts not present in it.
