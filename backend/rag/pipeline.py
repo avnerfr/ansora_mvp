@@ -812,16 +812,21 @@ def build_final_prompt(
             competition_info = competition_analysis or ""
 
 
+    # Use icp value for both target_audience and icp for backward compatibility
+    icp_value = icp or ''
     prompt = template.format(
         operational_pain_point=backgrounds_str,
+        backgrounds=backgrounds_str,  # Alias for backgrounds placeholder
         use_cases=backgrounds_str,
         campaing_context=marketing_text,
+        marketing_text=marketing_text,  # Alias for marketing_text placeholder
         context=marketing_text,
         user_provided_text=marketing_text,
         vector_search_context=vector_search_context,
         asset_type=asset_type or '',
         asset_type_instructions=asset_type_instructions,
-        target_audience=icp or '',
+        target_audience=icp_value,  # New format
+        icp=icp_value,  # Old format for backward compatibility
         company_analysis=company_info,
         competition_analysis=competition_info,
         latest_anouncements=company_json.get('latest_anouncements'),

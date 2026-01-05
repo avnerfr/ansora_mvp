@@ -404,14 +404,16 @@ async def get_icps_for_company(
         if not company_file or 'data' not in company_file:
             logger.warning(f"No company information found for {company_name}, returning default ICPs")
             # Return default ICPs if company info not found
+            default_icps = [
+                "Network & Security Operations",
+                "Application & Service Delivery",
+                "CIO",
+                "CISO",
+                "Risk and Compliance"
+            ]
             return {
-                "icps": [
-                    "Network & Security Operations",
-                    "Application & Service Delivery",
-                    "CIO",
-                    "CISO",
-                    "Risk and Compliance"
-                ]
+                "icps": default_icps,
+                "target_audience": default_icps  # Also return as target_audience for compatibility
             }
         
         company_data = company_file['data']
@@ -500,19 +502,24 @@ async def get_icps_for_company(
                     break
         
         logger.info(f"Returning ICPs for {company_name} (domain: {company_domain}): {icps}")
-        return {"icps": icps}
+        return {
+            "icps": icps,
+            "target_audience": icps  # Also return as target_audience for compatibility
+        }
         
     except Exception as e:
         logger.error(f"Error getting ICPs for company {company_name}: {e}", exc_info=True)
         # Return default ICPs on error
+        default_icps = [
+            "Network & Security Operations",
+            "Application & Service Delivery",
+            "CIO",
+            "CISO",
+            "Risk and Compliance"
+        ]
         return {
-            "icps": [
-                "Network & Security Operations",
-                "Application & Service Delivery",
-                "CIO",
-                "CISO",
-                "Risk and Compliance"
-            ]
+            "icps": default_icps,
+            "target_audience": default_icps  # Also return as target_audience for compatibility
         }
 
 

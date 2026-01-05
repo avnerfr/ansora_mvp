@@ -37,19 +37,22 @@ Focus on operational friction, inefficiency, manual work, troubleshooting headac
 Use colloquial operational language from buyer_language/pain_phrases.
 
 ----------------------------------------------------------------
-INPUTS
+ASSET TEMPLATES
 ----------------------------------------------------------------
+ASSET_TYPE: {asset_type}
+using the following structure and formatting
+{asset_type_instructions}
 
-TARGET_AUDIENCE:
-{target_audience}
 
-CAMPAIGN_CONTEXT (OPTIONAL):
-{campaing_context}
 
-OPERATIONAL_PAIN_POINT:
+INPUT ANCHORS:
+- OPERATIONAL_PAIN_POINT: The primary operational problem selected by the user.
 {operational_pain_point}
 
-INSIGHTS_JSON (FROM RAG — MANDATORY):
+- CAMPAIGN_CONTEXT (optional): Additional business, product, or campaign framing.
+{campaing_context}
+
+- INSIGHTS_JSON: Retrieved insights, posts, and language fragments.
 {vector_search_context}
 
 company's latest announcements are:
@@ -58,52 +61,43 @@ company's latest announcements are:
 company's competitors are:
 {competition_analysis}
 
+TARGET_AUDIENCE:
+{target_audience}
 
-You MUST ground all content in this INSIGHTS_JSON.
-Do NOT introduce concepts not present in it.
+INSIGHT SELECTION AND LANGUAGE AGGREGATION (MANDATORY INTERNAL STEP)
 
-----------------------------------------------------------------
-ASSET TEMPLATES
-----------------------------------------------------------------
-ASSET_TYPE: {asset_type}
-using the following structure and formatting
-{asset_type_instructions}
+You must perform the following steps BEFORE generating any asset.
 
 
-Use cases / key themes to prioritize: {backgrounds}
-
-
-
-INSIGHT SELECTION AND LANGUAGE AGGREGATION (MANDATORY STEP)
-
-You must perform the following steps BEFORE generating any asset:
+CORE RULE:
+The OPERATIONAL_PAIN_POINT is the single source of truth.
+All insights and language must strictly serve this pain point.
+Do NOT introduce new or adjacent problems.
 
 1. Primary Insight Selection
-- Select EXACTLY ONE primary operational insight.
-- The insight must represent the core failure or friction.
-- It must be stated as a single, concrete sentence.
-- Do NOT combine multiple problems.
-- Do NOT generalize beyond the evidence.
+- Select EXACTLY ONE operational insight from INSIGHTS_JSON.
+- The insight must directly explain, expose, or exemplify the OPERATIONAL_PAIN_POINT.
+- It must describe a concrete failure, friction, or operational breakdown.
+- Do NOT generalize, broaden, or reframe the pain point.
+- If multiple insights exist, choose the one with the highest explanatory power.
 
 2. Supporting Language Aggregation
 - You MAY aggregate pain phrases, emotional triggers, and buyer language
-  from multiple retrieved posts or insights.
-- Only include language that describes the SAME underlying problem.
-- All supporting phrases must reinforce the selected primary insight.
-- Do NOT introduce new failure types, domains, or operational surfaces.
+  from multiple insights or posts.
+- Only include language that describes the SAME operational pain point.
+- Supporting phrases may intensify urgency or realism, but may not add scope.
 
 3. Narrative Constraint
 - All generated assets MUST:
-  - Be anchored to the single primary insight.
-  - Use aggregated language only to express urgency, emotion, or realism.
-  - Avoid introducing secondary pains or adjacent problems.
+  - Stay strictly anchored to the OPERATIONAL_PAIN_POINT.
+  - Use the selected primary insight as the underlying explanation.
+  - Use supporting language only for tone, emotion, and credibility.
+  - Respect CAMPAIGN_CONTEXT if provided, without changing the pain definition.
 
-IMPORTANT OUTPUT RULE:
-The insight selection steps, reasoning, and any intermediate lists are internal instructions only.
-Do NOT include the Primary Insight, supporting phrases, excluded themes, or any selection output
-as part of the final asset.
-Only output the final asset content according to the requested ASSET_TYPE structure.
-
+IMPORTANT:
+- The insight selection steps, reasoning, and any intermediate choices are internal only.
+- Do NOT output the primary insight, supporting phrases, or selection logic.
+- Only output the final asset content according to the requested ASSET_TYPE structure.
 
 
 ---------------------------------------------------------------

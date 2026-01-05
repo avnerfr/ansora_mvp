@@ -40,8 +40,10 @@ function HomePageContent() {
     setIsLoadingICPs(true)
     try {
       const response = await ragAPI.getICPs(companyName)
-      if (response && response.icps) {
-        setIcpOptions(response.icps)
+      // Handle both 'icps' and 'target_audience' response formats
+      const options = response?.icps || response?.target_audience || []
+      if (options && options.length > 0) {
+        setIcpOptions(options)
       } else {
         // Fallback to default ICPs
         setIcpOptions([
