@@ -71,6 +71,7 @@ using the following structure and formatting
 Use cases / key themes to prioritize: {backgrounds}
 
 
+
 INSIGHT SELECTION AND LANGUAGE AGGREGATION (MANDATORY STEP)
 
 You must perform the following steps BEFORE generating any asset:
@@ -95,24 +96,13 @@ You must perform the following steps BEFORE generating any asset:
   - Use aggregated language only to express urgency, emotion, or realism.
   - Avoid introducing secondary pains or adjacent problems.
 
-If supporting language conflicts with or expands the primary insight,
-it MUST be excluded.
+IMPORTANT OUTPUT RULE:
+The insight selection steps, reasoning, and any intermediate lists are internal instructions only.
+Do NOT include the Primary Insight, supporting phrases, excluded themes, or any selection output
+as part of the final asset.
+Only output the final asset content according to the requested ASSET_TYPE structure.
 
-OUTPUT REQUIRED BEFORE ASSET GENERATION:
 
-Primary Insight (one sentence):
-<the single operational failure this asset is about>
-
-Included Supporting Phrases:
-- <phrase 1>
-- <phrase 2>
-- <phrase 3>
-
-Excluded Themes (must be ignored in asset):
-- <theme 1>
-- <theme 2>
-
-The final asset MUST strictly adhere to the Primary Insight above.
 
 ---------------------------------------------------------------
 OUTPUT

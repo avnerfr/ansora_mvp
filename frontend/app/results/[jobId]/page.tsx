@@ -155,6 +155,7 @@ export default function ResultsPage() {
   }
 
   const dedupedSources = dedupeSources(results.sources || [])
+  
   // Debug: Log first source's metadata fields
   if (dedupedSources.length > 0) {
     console.log('First source fields:', {
@@ -471,55 +472,20 @@ export default function ResultsPage() {
                             </a>
                           )}
 
-                          {/* YouTube timestamp link if available */}
-                          {source.video_url && (source.citation_start_time != null || source.start_sec != null) && (() => {
-                            // Extract timestamp value - handle both number and string formats
-                            const timeValue = source.citation_start_time != null ? source.citation_start_time : source.start_sec;
-                            // Convert to seconds, handling various formats
-                            let timestampSeconds = 0;
-                            if (typeof timeValue === 'string') {
-                              // Handle time format like "00:00:23" or "00:23" (HH:MM:SS or MM:SS)
-                              if (timeValue.includes(':')) {
-                                const parts = timeValue.split(':').map(p => parseInt(p, 10) || 0);
-                                if (parts.length === 3) {
-                                  // HH:MM:SS format
-                                  timestampSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
-                                } else if (parts.length === 2) {
-                                  // MM:SS format
-                                  timestampSeconds = parts[0] * 60 + parts[1];
-                                }
-                              } else {
-                                // Handle numeric string like "123" or "123s"
-                                const cleaned = timeValue.replace(/s$/i, '').trim();
-                                timestampSeconds = Math.floor(parseFloat(cleaned) || 0);
-                              }
-                            } else if (typeof timeValue === 'number') {
-                              timestampSeconds = Math.floor(timeValue);
-                            }
-                            
-                            if (timestampSeconds <= 0) {
-                              return null; // Don't show link if timestamp is invalid
-                            }
-                            
-                            // Strip existing timestamp parameters from URL (more comprehensive regex)
-                            const baseUrl = source.video_url.replace(/[?&]t=\d+[smh]?/gi, '').replace(/[?&]start=\d+/gi, '');
-                            const separator = baseUrl.includes('?') ? '&' : '?';
-                            // YouTube uses t=SECONDS format (just the number, no 's' suffix)
-                            const youtubeUrl = `${baseUrl}${separator}t=${timestampSeconds}`;
-                            return (
-                              <a
-                                href={youtubeUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center text-sm font-medium text-red-600 hover:text-red-800 hover:underline"
-                              >
-                                <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-                                </svg>
-                                Jump to {Math.floor(timestampSeconds / 60)}:{(timestampSeconds % 60).toFixed(0).padStart(2, '0')}
-                              </a>
-                            );
-                          })()}
+                          {/* YouTube timestamp link - use video_url directly from database */}
+                          {source.video_url && source.citation_start_time != null && (
+                            <a
+                              href={source.video_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center text-sm font-medium text-red-600 hover:text-red-800 hover:underline"
+                            >
+                              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                              </svg>
+                              Watch Video
+                            </a>
+                          )}
 
                           {/* Podcast timestamp link if available */}
                           {isPodcast(source) && source.episode_url && source.citation_start_time && (() => {

@@ -590,8 +590,33 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
                 thread_url = doc_url  # For frontend compatibility
             elif doc_type == "yt_summary":
                 source = "youtube"
-                url = doc_url
-                video_url = doc_url  # For frontend compatibility
+                # For YouTube, get video_url from metadata (prefer video_url over url)
+                # The url field in metadata should contain the video_url from the payload
+                # Use None as default to properly check for existence
+                video_url = doc.metadata.get('video_url') or doc.metadata.get('url') or doc_url or ''
+                if not video_url:
+                    logger.warning(f"YouTube document missing video_url. Metadata keys: {list(doc.metadata.keys())}, url field: {doc.metadata.get('url')}, video_url field: {doc.metadata.get('video_url')}, doc_url: {doc_url}")
+                else:
+                    # Fix timestamp format in video_url if needed
+                    # YouTube expects &t=SECONDSs format, not &t=00:00:23s
+                    import re
+                    # Check if URL has timestamp in wrong format (time format like 00:00:23)
+                    time_format_match = re.search(r'[?&]t=(\d{1,2}):(\d{2}):(\d{2})s?', video_url)
+                    if time_format_match:
+                        # Convert HH:MM:SS to seconds
+                        hours, minutes, seconds = map(int, time_format_match.groups())
+                        total_seconds = hours * 3600 + minutes * 60 + seconds
+                        # Replace the timestamp in the URL
+                        video_url = re.sub(r'[?&]t=\d{1,2}:\d{2}:\d{2}s?', f'&t={total_seconds}', video_url)
+                        logger.info(f"Fixed YouTube timestamp format in video_url: {video_url}")
+                    # Also check for MM:SS format
+                    mmss_format_match = re.search(r'[?&]t=(\d{1,2}):(\d{2})s?', video_url)
+                    if mmss_format_match and not time_format_match:
+                        minutes, seconds = map(int, mmss_format_match.groups())
+                        total_seconds = minutes * 60 + seconds
+                        video_url = re.sub(r'[?&]t=\d{1,2}:\d{2}s?', f'&t={total_seconds}', video_url)
+                        logger.info(f"Fixed YouTube timestamp format (MM:SS) in video_url: {video_url}")
+                url = video_url  # Also set url for backward compatibility
             elif doc_type == "podcast_summary":
                 source = "podcast"
                 # Podcasts use episode_url, not url
@@ -646,7 +671,6 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
                 "doc_type": doc_type,
                 "citation": citation,
                 "title": title,
-                "url": url,
                 "key_issues": key_issues,
                 "pain_phrases": pain_phrases,
                 "emotional_triggers": emotional_triggers,
@@ -656,14 +680,20 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
 
             # Add type-specific URL fields for frontend compatibility
             if doc_type == "reddit_post":
+                source_obj["url"] = url
                 source_obj["thread_url"] = thread_url
             elif doc_type == "yt_summary":
-                source_obj["video_url"] = video_url
+                if video_url:
+                    source_obj["video_url"] = video_url
+                else:
+                    logger.warning(f"YouTube source missing video_url for title: {title}, doc_type: {doc_type}, metadata keys: {list(doc.metadata.keys())}")
                 source_obj["citation_start_time"] = citation_start_time
             elif doc_type == "podcast_summary":
                 source_obj["episode_url"] = episode_url
                 source_obj["citation_start_time"] = citation_start_time
                 source_obj["mp3_url"] = _safe_str(mp3_url)
+            else:
+                source_obj["url"] = url
             external_docs.append(source_obj)
             #logger.info(f"Reddit filtered docs JSON: {reddit_filtered_docs_json_text}")
 
@@ -908,7 +938,7 @@ async def process_rag(
 
     # Step 3: Build vector search context
     vector_search_context = build_vector_search_context(retrieved_docs)
-
+    logger.info(f"%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%marketing_text: {marketing_text}")
     # Step 4: Build final prompt
     prompt = build_final_prompt(
         template=template,

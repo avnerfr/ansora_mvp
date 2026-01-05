@@ -535,6 +535,7 @@ class VectorStore:
 
                 # YouTube-specific fields
                 'url': point.payload.get("video_url"),
+                'video_url': point.payload.get("video_url"),  # Also store as video_url for consistency
                 'description': point.payload.get("description"),
  
                 'detailed_description': point.payload.get("detailed_description"),
