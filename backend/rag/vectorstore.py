@@ -94,7 +94,7 @@ class VectorStore:
         """Lazy-load OpenAI embeddings for both user documents and cloud collections (LangChain compatible)."""
         if self._embeddings is None:
             try:
-                logger.info(f"Creating OpenAI embeddings with model {self._model_name} ({self._vector_size}D)...")
+                #logger.info(f"Creating OpenAI embeddings with model {self._model_name} ({self._vector_size}D)...")
                 #logger.info(f">>>>>>>>>>>>>_openai_api_key {self._openai_api_key}")
                 #logger.info(f">>>>>>>>>>>>>_openai_base_url {self._openai_base_url}")
 
@@ -103,7 +103,7 @@ class VectorStore:
                     openai_api_key=self._openai_api_key,
                     base_url=self._openai_base_url
                 )
-                logger.info(f"✓ OpenAI embeddings initialized: {self._vector_size}D")
+                #logger.info(f"✓ OpenAI embeddings initialized: {self._vector_size}D")
             except Exception as e:
                 logger.error(f"❌ Failed to create embeddings: {type(e).__name__}: {str(e)}")
                 self._embeddings = None
@@ -224,163 +224,27 @@ class VectorStore:
 
 
     
-    def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post", company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
+    def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post", company_enumerations: List[str] = [], collection_name: str = None, company_name: str = None) -> List[Document]:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
             logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}, doc_type={doc_type}, company_name={company_name}")
-            
-            # Check if collection exists
-            collections = self.client.get_collections().collections
-            collection_names = [c.name for c in collections]
-             
-            # Use the unified summaries collection
-            collection_name_to_use = None# os.getenv("SUMMARIES_COLLECTION_NAME")
-            
 
-            
-            # If not set, try to get company domain and construct collection name
-            if not collection_name_to_use:
-                company_domain = None
-                if company_name:
-                    try:
-                        # Get company information from S3 to extract domain
-                        company_file = get_latest_company_file(company_name)
-                        if company_file and 'data' in company_file:
-                            company_data = company_file['data']
-                            company_analysis = company_data.get('company_analysis', '')
-                            if company_analysis:
-                                try:
-                                    # Try to extract JSON from company_analysis
-                                    json_match = re.search(r'```json\s*(.*?)\s*```', company_analysis, re.DOTALL)
-                                    if json_match:
-                                        company_json = json.loads(json_match.group(1).strip())
-                                        company_domain = company_json.get('company_domain', '')
-                                        logger.info(f"Extracted company_domain from JSON block: {company_domain}")
-                                    else:
-                                        # Try parsing as direct JSON
-                                        company_json = json.loads(company_analysis)
-                                        company_domain = company_json.get('company_domain', '')
-                                        logger.info(f"Extracted company_domain from direct JSON: {company_domain}")
-                                except (json.JSONDecodeError, AttributeError) as e:
-                                    logger.warning(f"Error parsing company_analysis for {company_name}: {e}")
-                            else:
-                                logger.warning(f"No company_analysis found in company file for {company_name}")
-                        else:
-                            logger.warning(f"No company file found for {company_name}")
-                    except Exception as e:
-                        logger.warning(f"Error getting company file for {company_name}: {e}", exc_info=True)
-                else:
-                    logger.info("No company_name provided, will use auto-detection")
-                
-                # Construct collection name based on domain
-                if company_domain:
-                    # Normalize domain: lowercase, replace spaces with underscores
-                    domain_normalized = company_domain.lower().replace(' ', '_')
-                    collection_name_to_use = f"{domain_normalized}-summaries_1_0"
-                    logger.info(f"✓ Using collection based on company domain: {collection_name_to_use} (domain: {company_domain}, normalized: {domain_normalized})")
-                    
-                    # Check if the domain-based collection exists
-                    if collection_name_to_use not in collection_names:
-                        logger.warning(f"⚠ Domain-based collection '{collection_name_to_use}' not found. Available collections: {collection_names}")
-                        # Still use the domain-based name - don't fall back to generic collections
-                        # This ensures we always use the domain format when domain is available
-                else:
-                    logger.info("No company domain found, will use auto-detection")
-                
-                # Only fall back to auto-detection if no domain was found
-                if not collection_name_to_use:
-                    # Try to find any summaries collection (prefer newer versions)
-                    summaries_collections = [name for name in collection_names if 'summaries' in name.lower()]
-                    if summaries_collections:
-                        # Sort to prefer newer versions (higher numbers)
-                        summaries_collections.sort(reverse=True)
-                        collection_name_to_use = summaries_collections[0]
-                        logger.info(f"Auto-detected collection: {collection_name_to_use} (from available: {collection_names})")
-                    else:
-                        logger.warning(f"❌ No SUMMARIES_COLLECTION_NAME set and no summaries collection found. Available collections: {collection_names}")
-                        return []
-            
-            if collection_name_to_use not in collection_names:
-                logger.warning(f"❌ {collection_name_to_use} not found in cloud Qdrant. Available collections: {collection_names}")
+            embeddings = self.embeddings  # OpenAI embeddings
+            if embeddings is None:
+                logger.error("❌ OpenAI embeddings not initialized!")
                 return []
-            
-            # Get collection info
-            try:
-                collection_info = self.client.get_collection(collection_name_to_use)
-                # Access vector size - handle different Qdrant client versions
-                actual_vector_size = collection_info.config.params.vectors.size
-                points_count = getattr(collection_info, 'points_count', 0)
-                #logger.info(f"Collection info: {points_count} points, {actual_vector_size}D vectors")
-            except Exception as e:
-                logger.error(f"❌ Error getting collection info: {type(e).__name__}: {str(e)}", exc_info=True)
-                return []
-            
-            # Generate query embedding using OpenAI text-embedding-3-small
-            try:
-                if actual_vector_size == 768:
-                    # Collection uses BAAI/bge-base-en-v1.5 (768D)
-                    #logger.info("Generating query embedding with BAAI/bge-base-en-v1.5")
-                    embeddings = self.embeddings  # OpenAI embeddings
-                    if embeddings is None:
-                        logger.error("❌ OpenAI embeddings not initialized!")
-                        return []
-                    logger.info(f">>>>>>>>>>>>>embed_query {query}")
+            logger.info(f"Query: {query}")
 
-                    openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
-                    response = openai_client.embeddings.create(
-                        input=query,
-                        model=self._model_name
-                    )
-                    query_vector = response.data[0].embedding
-                elif actual_vector_size == 384:
-                    # Legacy: Collection uses 384D vectors (old SentenceTransformer setup)
-                    logger.warning("⚠ Collection uses 384D vectors - expected 768D. Please re-index your collection.")
-                    logger.error(f"❌ Vector size mismatch! Expected 768D, got 384D")
-                    return []
-                elif actual_vector_size == 3072:
-                    # Legacy: Collection uses 3072D vectors (old OpenAI setup)
-                    logger.warning("⚠ Collection uses 3072D vectors - expected 768D. Please re-index your collection.")
-                    logger.error(f"❌ Vector size mismatch! Expected 768D, got 3072D")
-                    return []
-                elif actual_vector_size == 1536:
-                    # Legacy: Collection uses 1536D vectors (old OpenAI setup)
-                    logger.warning("⚠ Collection uses 1536D vectors - expected 768D. Please re-index your collection.")
-                    logger.error(f"❌ Vector size mismatch! Expected 768D, got 1536D")
-                    return []
-                else:
-                    logger.error(f"❌ Unsupported vector size: {actual_vector_size}D. Expected 768D.")
-                    return []
-                
-                #logger.info(f"✓ Query vector generated: {len(query_vector)}D")
-                
-                # Verify vector size matches
-                if len(query_vector) != actual_vector_size:
-                    logger.error(f"❌ Vector size mismatch! Query: {len(query_vector)}D, Collection: {actual_vector_size}D")
-                    return []
-            except Exception as e:
-                logger.error(f"❌ Error generating query embedding: {type(e).__name__}: {str(e)}", exc_info=True)
-                return []
-            
-            # Search using direct Qdrant client API
-            #logger.info(f"Performing similarity search with k={k} ")
-
-            #logger.info(f"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
-            #logger.info(f"company_enumerations: {company_enumerations}")
-            #logger.info(f"company_enumerations.get('domain'): {company_enumerations.get('domain')}")
-            #logger.info(f"company_enumerations.get('operational_surface'): {company_enumerations.get('operational_surface')}")
-            #logger.info(f"company_enumerations.get('execution_surface'): {company_enumerations.get('execution_surface')}")
-            #logger.info(f"company_enumerations.get('failure_type'): {company_enumerations.get('failure_type')}")
-
-
-            logger.info(f"###########  After reload must change the code here ###########")
-            logger.info(f"###########  After reload must change the code here ###########")
-            logger.info(f"###########  After reload must change the code here ###########")
-            logger.info(f"###########  After reload must change the code here ###########")
-            logger.info(f"###########  After reload must change the code here ###########")
-            logger.info(f"###########  After reload must change the code here ###########")
+            openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
+            response = openai_client.embeddings.create(
+                input=query,
+                model=self._model_name
+            )
+            query_vector = response.data[0].embedding
+            logger.info(f"###########  After reload must remove the security_control_surface from the code ###########")
 
             search_results_old = self.client.query_points(
-                collection_name=collection_name_to_use,
+                collection_name=collection_name,
                 query=query_vector,
                 limit=k,
                 with_payload=True,
@@ -396,7 +260,7 @@ class VectorStore:
                 ),
             )
             search_results_new = self.client.query_points(
-                collection_name=collection_name_to_use,
+                collection_name=collection_name,
                 query=query_vector,
                 limit=k,
                 with_payload=True,
@@ -430,8 +294,8 @@ class VectorStore:
             logger.error(f"❌ Error searching Documents: {type(e).__name__}: {str(e)}", exc_info=True)
             return []
             
-    def search_reddit_posts(self, query: str, k: int = 3, company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "reddit_post", company_enumerations, company_name)
+    def search_reddit_posts(self, query: str, k: int = 3, company_enumerations: List[str] = [], collection_name: str = None, company_name: str = None) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "reddit_post", company_enumerations,collection_name, company_name)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -474,9 +338,8 @@ class VectorStore:
                 "date_created_utc": payload.get("date_created_utc"),
                 "flair_text": payload.get("flair_text"),
             }
-            
             # Debug logging for post_id
-            logger.debug(f"Reddit post {i}: post_id={post_id}, title={payload.get('title', 'N/A')[:50]}")
+            #logger.debug(f"Reddit post {i}: post_id={post_id}, title={payload.get('title', 'N/A')[:50]}")
 
 
             # Generate appropriate filename based on doc_type
@@ -485,7 +348,7 @@ class VectorStore:
             metadata["filename"] = filename
 
             # Log what we extracted
-            logger.info(f"Extracted Reddit Post metadata:  title={filename}, summary={payload.get('summary', 'Untitled')}, score={point.score}")
+            #logger.info(f"Extracted Reddit Post metadata:  title={filename}, summary={payload.get('summary', 'Untitled')}, score={point.score}")
 
             # Create Document
             doc = Document(
@@ -500,8 +363,8 @@ class VectorStore:
         
 
     
-    def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "yt_summary", company_enumerations, company_name)
+    def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], collection_name: str = None, company_name: str = None) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "yt_summary", company_enumerations, collection_name, company_name)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -541,28 +404,29 @@ class VectorStore:
                 'detailed_description': point.payload.get("detailed_description"),
 
             }
-            
+      
             # Generate appropriate filename based on doc_type
             filename = f"YouTube Summary: {point.payload.get('title', 'Untitled')}"
            
             metadata["filename"] = filename
 
             # Log what we extracted
-            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}, {point.payload.get('key_issues')}, {point.payload.get('pain_phrases')}, {point.payload.get('emotional_triggers')}, {point.payload.get('implicit_risks')}, {point.payload.get('buyer_language')}")
-            
+            logger.debug("=================================================================================")
+            logger.debug(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}, {point.payload.get('key_issues')}, {point.payload.get('pain_phrases')}, {point.payload.get('emotional_triggers')}, {point.payload.get('implicit_risks')}, {point.payload.get('buyer_language')}")
+            logger.debug("=================================================================================")
+
             # Create Document
             doc = Document(
                 page_content=text,
                 metadata=metadata
             )
             documents.append(doc)
-            
         
         logger.info(f"✅ Retrieved {len(documents)} Documents  successfully")
         return documents
 
-    def search_podcast_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], company_name: str = None) -> List[Document]:
-        search_results_points = self.search_doc_type(query, k, "podcast_summary", company_enumerations, company_name)
+    def search_podcast_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [],collection_name: str = None, company_name: str = None) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "podcast_summary", company_enumerations, collection_name,  company_name)
 
         # Convert Qdrant results to LangChain Documents
         documents = []
@@ -608,8 +472,7 @@ class VectorStore:
             metadata["filename"] = filename
 
             # Log what we extracted
-            logger.info(f"Extracted metadata:  doc_type={doc_type}, filename={filename}, score={point.score}, {point.payload.get('key_issues')}, {point.payload.get('pain_phrases')}, {point.payload.get('emotional_triggers')}, {point.payload.get('implicit_risks')}, {point.payload.get('buyer_language')}")
-            
+          
             # Create Document
             doc = Document(
                 page_content=text,

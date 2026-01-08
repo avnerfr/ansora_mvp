@@ -63,12 +63,6 @@ def get_latest_company_file(company_name: str) -> Optional[Dict[str, Any]]:
     try:
         s3_client = get_s3_client()
         normalized_name = normalize_company_name(company_name)
-
-        logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        logger.info(f"normalized_name: {normalized_name}")
-        logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-
-        
         # List all files for this company
         prefix = f"{normalized_name}-"
         response = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)

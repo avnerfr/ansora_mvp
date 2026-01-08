@@ -56,4 +56,5 @@ EXPOSE 8000
 
 # Run the application
 # Use shell form to allow environment variable expansion
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+# Use custom log config to prevent duplicate handlers
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --log-config logging_config.json

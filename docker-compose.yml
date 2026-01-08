@@ -37,7 +37,7 @@ services:
       - qdrant
     networks:
       - marketing-mvp-network
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-config logging_config.json
 
 volumes:
   qdrant_storage:

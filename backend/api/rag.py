@@ -175,7 +175,9 @@ async def process_marketing_material(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """Process marketing material through RAG pipeline."""
-    logger.info(f"POST /api/v1/rag/process - User: {current_user.email} (ID: {current_user.id})")
+    import uuid as uuid_lib
+    request_id = str(uuid_lib.uuid4())[:8]
+    logger.info(f"[Request {request_id}] POST /api/v1/rag/process - User: {current_user.email} (ID: {current_user.id})")
     
     # Validate inputs
     if not request.backgrounds:
@@ -219,25 +221,14 @@ async def process_marketing_material(
             # Use existing data
             company_analysis = company_file['data'].get('company_analysis')
             competition_analysis = company_file['data'].get('competition_analysis')
-            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-            logger.info(f"Using cached company information from {company_file['date']}")
-            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         else:
             # Generate new company information
             logger.info(f"Generating new company information for {company_name}")
             company_website = get_company_website(company_name)
-            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-            logger.info(f"company_website: {company_website}")
-            logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
             try:
                 company_analysis = company_analysis_agent(company_name, company_website)
                 competition_analysis = competition_analysis_agent(company_name, company_website)
-                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-                logger.info(f"company_analysis: {company_analysis}")
-                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")            
-                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-                logger.info(f"competition_analysis: {competition_analysis}")
-                logger.info(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")                
+           
                 # Save to S3
                 save_company_file(company_name, company_analysis, competition_analysis)
                 logger.info(f"Saved company information to S3 for {company_name}")
@@ -263,7 +254,9 @@ async def process_marketing_material(
     
     # Process RAG
     try:
-        logger.info("Calling RAG pipeline...")
+        import traceback
+        logger.info(f"[Request {request_id}] Calling RAG pipeline...")
+        logger.debug(f"[Request {request_id}] Call stack: {''.join(traceback.format_stack()[-3:-1])}")
         refined_text, sources, retrieved_docs, final_prompt, email_content = await process_rag(
             user_id=current_user.id,
             backgrounds=request.backgrounds,
@@ -275,6 +268,7 @@ async def process_marketing_material(
             company_analysis=company_analysis,
             competition_analysis=competition_analysis,
             is_administrator=is_administrator,
+            request_id=request_id,  # Pass request_id to track duplicate calls
         )
         logger.info(f"✓ RAG pipeline completed - Output: {len(refined_text)} chars, Sources: {len(sources)}, Retrieved Docs: {len(retrieved_docs)}")
     except Exception as e:
@@ -525,7 +519,7 @@ async def get_icps_for_company(
 
 @router.get("/operational-pains/{company_name}")
 async def get_operational_pains_for_company(
-    company_name: str,
+    company_name: str,company_file,
     current_user: User = Depends(get_current_user),
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):

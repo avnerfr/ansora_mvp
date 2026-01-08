@@ -40,6 +40,17 @@ origins = [
 
 # Debug logging
 import logging
+import json
+from logging.config import dictConfig
+from pathlib import Path
+
+# Load and configure logging from JSON config to prevent duplicates
+config_path = Path(__file__).parent / "logging_config.json"
+if config_path.exists():
+    with open(config_path) as f:
+        log_config = json.load(f)
+    dictConfig(log_config)
+
 logger = logging.getLogger(__name__)
 logger.info(f"🔍 ALLOWED_ORIGINS env var: {settings.ALLOWED_ORIGINS}")
 logger.info(f"🔍 Parsed origins list: {origins}")

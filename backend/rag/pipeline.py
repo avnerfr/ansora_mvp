@@ -3,6 +3,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 from rag.vectorstore import vector_store
+from rag import s3_utils
 from core.config import settings
 from typing import List, Dict, Any, Optional
 import logging
@@ -10,6 +11,7 @@ import re
 import json
 import tiktoken
 import os
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
@@ -33,10 +35,7 @@ gmail_refresh_token = os.getenv("GMAIL_REFRESH_TOKEN")
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
 # Configure logging
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Don't configure logging here - main.py handles it to prevent duplicates
 
 
 asset_type_rules = {
@@ -461,7 +460,7 @@ async def build_retrieval_query(
     Returns:
         str: The optimized retrieval query
     """
-    logger.info("Building optimized retrieval query for vector DB...")
+    logger.info("========Step 1. Building optimized retrieval query for vector DB===========")
     backgrounds_str = ", ".join(backgrounds) if backgrounds else ""
 
     # Ensure marketing_text and backgrounds_str are strings and not None
@@ -480,42 +479,34 @@ async def build_retrieval_query(
         company_domain=company_domain
     )
 
-    #logger.info("$$$$$$$$$$$$$$$$$$$$$$$$ VECTOR_DB_RETREIVAL_PROMPT $$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-    #logger.info(retrieval_prompt)
-    #logger.info("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-
     retrieval_query = marketing_text
     try:
-        #retrieval_llm = ChatOpenAI(
-        #    model_name="gpt-4o", #"gpt-5",
-        #    openai_api_key=settings.OPENAI_API_KEY,
-        #    temperature=1.0,
-        #)
         openai_api_key = settings.DEEPINFRA_API_KEY
         base_url = settings.DEEPINFRA_API_BASE_URL
         retrieval_llm = ChatOpenAI(
             model_name="deepseek-ai/DeepSeek-V3.2", #"gpt-5",
             openai_api_key=openai_api_key,
             base_url=base_url,
-#            temperature=0.1,
         )
         rq_messages = [HumanMessage(content=retrieval_prompt)]
         rq_response = await retrieval_llm.ainvoke(rq_messages)
         retrieval_query = (rq_response.content or marketing_text).strip()
-        logger.info(f"✓ Retrieval query built (length={len(retrieval_query)} chars)")
-        logger.info("############################# Retrieval query ###################################")
-        logger.info(f"Retrieval query:\n{retrieval_query}")
-        logger.info("#################################################################################")
+
     except Exception as e:
         logger.warning(
             f"⚠ Error building retrieval query, falling back to full context: "
             f"{type(e).__name__}: {str(e)}"
         )
-
+    logger.info(f"✓ Retrieval query built")
+    logger.info("---------------------------------------------------------------------------------")
+    query_lines = retrieval_query.split("\n")
+    for line in query_lines:
+        logger.info(f"{line}")
+    logger.info("=================================================================================")
     return retrieval_query, retrieval_prompt
 
 
-async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[List[Any], List[Any]]:
+async def retrieve_rag_documents(retrieval_query: str, company_enumerations: List[str],collection_name: str, company_name: str) -> tuple[List[Any], List[Any]]:
     """
     Retrieve relevant documents from vector database using the retrieval query.
 
@@ -525,7 +516,7 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
     Returns:
         tuple: (external_docs, retrieved_docs)
     """
-    logger.info("Retrieving relevant documents from vector store...")
+    logger.info("============== Step 2. Retrieving RAG documents from vector store ================")
     external_docs: list[Any] = []
     combined_docs: list[Any] = []
 
@@ -545,22 +536,14 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
                 retrieval_query_chunks.extend(vector_store.chunking(line))
             else:
                 retrieval_query_chunks.append(line) 
-        # read company_enumerations.json from bucket 
-        #  and add the enumerations to the retrieval_query_chunks
-        s3 = boto3.client('s3')
-        key = company_name.lower()+'_enumerations.json'
-        logger.info(f"Reading company enumerations from S3: {key}")
-        response = s3.get_object(Bucket='ansora-company-enumerations', Key=key)
-        company_enumerations = json.loads(response['Body'].read().decode('utf-8'))
-
-        #logger.info(f"Company enumerations: {company_enumerations}")
-
 
         for chunk in retrieval_query_chunks:
-            logger.info(f"Searching for chunk: {chunk} in reddit posts, youtube videos, and podcasts")
-            reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10, company_enumerations=company_enumerations, company_name=company_name))
-            youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3, company_enumerations=company_enumerations, company_name=company_name))
-            podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3, company_enumerations=company_enumerations, company_name=company_name))
+            logger.info(f"-------------------Searching for chunk------------------------")
+            logger.info(f"{chunk}")
+            logger.info(f"--------------------------------------------------------------")
+            reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
+            youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
+            podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
 
 
  
@@ -568,7 +551,7 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
         # Check if post_id exists in any doc
         use_post_id = any(hasattr(doc, 'metadata') and doc.metadata.get('post_id') for doc in reddit_docs[:5]) if reddit_docs else False
         merger_field = "post_id" if use_post_id else "url"
-        logger.info(f"Using '{merger_field}' field for Reddit duplicate filtering")
+
         reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, merger_field, 10)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
@@ -621,6 +604,34 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
                 source = "podcast"
                 # Podcasts use episode_url, not url
                 episode_url = doc.metadata.get('episode_url', '')
+                
+                # Normalize citation_start_time to seconds if it's in time format
+                citation_start_time_raw = doc.metadata.get('citation_start_time')
+                if citation_start_time_raw and isinstance(citation_start_time_raw, str):
+                    # Handle time format like "00:00:23" or "00:23" (HH:MM:SS or MM:SS)
+                    if ':' in citation_start_time_raw:
+                        parts = citation_start_time_raw.split(':')
+                        try:
+                            if len(parts) == 3:  # HH:MM:SS format
+                                hours, minutes, seconds = map(int, parts)
+                                citation_start_time = hours * 3600 + minutes * 60 + seconds
+                            elif len(parts) == 2:  # MM:SS format
+                                minutes, seconds = map(int, parts)
+                                citation_start_time = minutes * 60 + seconds
+                            else:
+                                citation_start_time = float(citation_start_time_raw)
+                        except (ValueError, AttributeError):
+                            citation_start_time = citation_start_time_raw
+                    else:
+                        try:
+                            citation_start_time = float(citation_start_time_raw)
+                        except (ValueError, TypeError):
+                            citation_start_time = citation_start_time_raw
+                elif isinstance(citation_start_time_raw, (int, float)):
+                    citation_start_time = citation_start_time_raw
+                else:
+                    citation_start_time = citation_start_time_raw
+                
                 url = episode_url  # Use episode_url as the main url
             else:
                 source = "unknown"
@@ -703,6 +714,12 @@ async def retrieve_documents(retrieval_query: str, company_name: str) -> tuple[L
         external_docs = []
         combined_docs = []
 
+    logger.info(f"✓ RAG documents retrieved: {len(combined_docs)} documents")
+    logger.info("---------------------------------------------------------------------------------")
+    logger.debug("=================================================================================")
+    logger.debug(f"{combined_docs}")
+    logger.debug("=================================================================================")
+
     return external_docs, combined_docs
 
 
@@ -716,6 +733,8 @@ def build_vector_search_context(retrieved_docs: List[Any]) -> str:
     Returns:
         str: JSON string containing vector search context
     """
+    logger.info("================== Step 3. Building vector search context ====================")
+
     # join all documents metadata to a json array for the vector_search_context
     vector_search_context = []
     for doc in retrieved_docs:
@@ -766,7 +785,7 @@ def build_final_prompt(
     Returns:
         str: The final prompt with all variables replaced
     """
-    logger.info("Building final prompt...")
+    logger.info("===================== Step 4. Building final prompt =========================")
 
     # Expand structured rule blocks from asset type dictionaries
     asset_type_instructions = asset_type_rules.get(asset_type, asset_type or "") if asset_type else ""
@@ -863,7 +882,7 @@ async def generate_llm_response(prompt: str) -> str:
         str: The refined text response from LLM
     """
     # Initialize LLM
-    logger.info("Initializing LLM (GPT-4o)...")
+    logger.info("===================== Step 5. Generating LLM response =========================")
     # See note above on temperature: we set temperature=1.0 explicitly
     # to comply with models that only accept the default temperature.
     #llm = ChatOpenAI(
@@ -880,7 +899,6 @@ async def generate_llm_response(prompt: str) -> str:
     logger.info("✓ LLM initialized")
 
     # Generate response
-    logger.info("Sending request to OpenAI API...")
     messages = [
         #SystemMessage(content=SYSTEM_PROMPT),
         HumanMessage(content=prompt)
@@ -888,17 +906,53 @@ async def generate_llm_response(prompt: str) -> str:
 
     try:
         response = await llm.ainvoke(messages)
-        logger.info(f"?? LLM messages: {messages}")
+        #logger.info(f"?? LLM messages: {messages}")
         refined_text = response.content if hasattr(response, 'content') else str(response)
         #logger.info(f"✓ LLM response received: {len(refined_text)} chars")
-        logger.info(f"✓ LLM response received: {refined_text}")
-        logger.debug(f"Refined text preview: {refined_text[:200]}...")
+        #logger.info(f"✓ LLM response received: {refined_text}")
+        #logger.debug(f"Refined text preview: {refined_text[:200]}...")
     except Exception as e:
         logger.error(f"✗ Error calling LLM: {type(e).__name__}: {str(e)}")
         raise
-
+    logger.debug("=================================================================================")
+    logger.debug(f"LLM response: {refined_text}")
+    logger.debug("=================================================================================")
+    logger.info("✓ Response generated")
     return refined_text
 
+def get_company_enumerations(company_name: str) -> List[str]:
+    """Get company enumerations from S3 bucket."""
+    s3 = boto3.client('s3')
+    key = company_name.lower()+'_enumerations.json'
+    logger.info(f"Reading company enumerations from S3: {key}")
+    response = s3.get_object(Bucket='ansora-company-enumerations', Key=key)
+    return json.loads(response['Body'].read().decode('utf-8'))
+
+
+def get_collection_name(company_analysis: str) -> str:
+    """Get collection name from company file."""
+            
+    # Check if collection exists
+    #collections = self.client.get_collections().collections
+    #collection_names = [c.name for c in collections]
+
+    try:
+        company_json = re.search(r'```json(.*)```', company_analysis, re.DOTALL).group(1)
+        company_json = json.loads(company_json)
+        company_domain = company_json.get('company_domain', '')
+        collection_name = company_domain + "-summaries_1_0"
+        logger.info(f"Collection Name: {collection_name}")
+
+        return collection_name
+    except Exception as e:
+        logger.error(f"Error getting collection name: {e}")
+        return None
+
+           
+
+# Track active pipeline executions to prevent duplicates
+_active_pipelines: dict[str, bool] = {}
+_pipeline_lock = asyncio.Lock()
 
 async def process_rag(
     user_id: int,
@@ -911,6 +965,7 @@ async def process_rag(
     company_analysis: str | None = None,
     competition_analysis: str | None = None,
     is_administrator: bool = False,
+    request_id: str | None = None,
 ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str, str]:
     """
     Process RAG pipeline and return refined text, sources, retrieved documents, final prompt, and email content.
@@ -918,102 +973,134 @@ async def process_rag(
     Returns:
         tuple: (refined_text, sources_list, retrieved_docs_list, final_prompt, email_content)
     """
-    logger.info(f"=== Starting RAG Pipeline ===")
-    logger.info(f"User ID: {user_id}")
-    logger.info(f"Backgrounds / use cases: {backgrounds}")
-    logger.info(f"Context text length: {len(marketing_text)} chars")
-    logger.info(f"Context text preview: {marketing_text[:100]}...")
-    logger.info(f"Asset Type: {asset_type}, ICP: {icp}")
-    logger.info(f"Full context text: {marketing_text}")
-    logger.debug(f"Template: {template}")
+    import uuid as uuid_lib
     
-    # Use default template if none provided
-    if template is None:
-        template = DEFAULT_TEMPLATE
-        logger.info("Using default template")
-    else:
-        logger.info("Using custom/override template")
+    # Create a unique execution key
+    execution_key = f"{request_id}_{user_id}_{hash(tuple(backgrounds))}_{hash(marketing_text)}"
     
-    # Step 1: Build optimized retrieval query
-    retrieval_query, retrieval_prompt = await build_retrieval_query(marketing_text, backgrounds, company_analysis)
-    backgrounds_str = ", ".join(backgrounds)
-
-    # Step 2: Retrieve documents from vector DB
-    external_docs, retrieved_docs = await retrieve_documents(retrieval_query, company_name)
-
-    # Step 3: Build vector search context
-    vector_search_context = build_vector_search_context(retrieved_docs)
-    logger.info(f"%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%marketing_text: {marketing_text}")
-    logger.info(f"%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%backgrounds_str: {backgrounds_str}")
-    # Step 4: Build final prompt
-    prompt = build_final_prompt(
-        template=template,
-        backgrounds_str=backgrounds_str,
-        marketing_text=marketing_text,
-        vector_search_context=vector_search_context,
-        asset_type=asset_type,
-        icp=icp,
-        company_name=company_name,
-        company_analysis=company_analysis,
-        competition_analysis=competition_analysis,
-
-    )
-
-    # Step 5: Generate LLM response
-    refined_text = await generate_llm_response(prompt)
+    # Use lock to make check-and-set atomic (prevent race conditions)
+    async with _pipeline_lock:
+        # Check if this pipeline is already running
+        if execution_key in _active_pipelines:
+            logger.error(f"❌ DUPLICATE EXECUTION DETECTED! Pipeline already running for key: {execution_key}. Request ID: {request_id}")
+            raise RuntimeError(f"Pipeline execution already in progress for request {request_id}. This should not happen.")
+        
+        # Mark as active (atomic operation)
+        _active_pipelines[execution_key] = True
+        logger.info(f"✓ Lock acquired and pipeline marked as active: {execution_key[:20]}")
     
-    # Format sources for the UI.
-    # We ONLY include external references (YouTube/Reddit/Podcasts) as sources
-    # for the UI. User‑uploaded documents are used as hidden context for RAG,
-    # but are not returned as visible "sources" in the result list.
-    logger.info("Formatting sources...")
-    source_docs: list[Any] = []
-    if external_docs:
-        logger.info(f"Including {len(external_docs)} external reference documents as sources (excluding user uploads)")
-        source_docs.extend(external_docs)
-    else:
-        logger.info("No external reference documents found; returning empty sources list (user uploads excluded)")
-
-    sources = format_sources(source_docs)
-    logger.info(
-        f"✓ Formatted {len(sources)} sources "
-        f"(0 user documents, {len(external_docs)} external references)"
-    )
-    
-    # Format retrieved documents for frontend
-    retrieved_docs_formatted = []
-    for doc in retrieved_docs:
-        if hasattr(doc, 'metadata') and hasattr(doc, 'page_content'):
-            doc_dict = {
-                "page_content": doc.page_content,
-                "metadata": doc.metadata
-            }
-            retrieved_docs_formatted.append(doc_dict)
-
-    logger.info("=== RAG Pipeline Completed Successfully ===")
-    
-    # Build email content (always build, but only send if administrator)
-    email_content = ""
     try:
-        email_sent, email_content = send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                               company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
-                                               prompt, refined_text, sources, retrieved_docs, send=is_administrator)
-        if is_administrator:
-            if email_sent:
-                logger.info("Email sent successfully to administrators")
-            else:
-                logger.warning("Failed to send email to administrators")
-    except Exception as e:
-        logger.error(f"Email processing failed (non-critical): {e}", exc_info=True)
-        # Still build email content even if sending fails
+        pipeline_id = str(uuid_lib.uuid4())[:8]
+        logger.info(f"Generated pipeline_id: {pipeline_id} for request {request_id}")
+        request_id_str = f"[Request {request_id}]" if request_id else ""
+        logger.info(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        logger.info(f">>>>>>>>>>>>>>>>>>>>>>>>>>>> Starting RAG Pipeline >>>>>>>>>>>>>>>>>>>>>")#{request_id_str} [Pipeline ID: {pipeline_id}] [Execution Key: {execution_key[:16]}] >>>>>>>>>>>>>>>>>>>")
+        logger.info(f">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        logger.info(f"User ID: {user_id}")
+        logger.info(f"Operational Pain Point: {backgrounds}")
+        logger.info(f"Campaign Context: {marketing_text}")
+        logger.info(f"Target Audience: {icp}")
+        logger.info(f"Asset Type: {asset_type}")
+        logger.info(f"Company Name: {company_name}")
+    #    logger.info(f"Company Domain: {json.dumps(company_analysis, indent=4).get('company_domain')}")
+     
+
+
+        company_enumerations = get_company_enumerations(company_name)
+        company_file = s3_utils.get_latest_company_file(company_name)
+        collection_name = get_collection_name(company_analysis)
+
+        # Step 1: Build optimized retrieval query
+        retrieval_query, retrieval_prompt = await build_retrieval_query(marketing_text, backgrounds, company_analysis)
+
+
+        # Step 2: Retrieve documents from vector DB
+        external_docs, retrieved_docs = await retrieve_rag_documents(retrieval_query, company_enumerations,collection_name, company_name)
+
+        # Step 3: Build vector search context
+        vector_search_context = build_vector_search_context(retrieved_docs)
+
+
+        backgrounds_str = ", ".join(backgrounds)
+
+        # Step 4: Build final prompt
+        prompt = build_final_prompt(
+            template=template,
+            backgrounds_str=backgrounds_str,
+            marketing_text=marketing_text,
+            vector_search_context=vector_search_context,
+            asset_type=asset_type,
+            icp=icp,
+            company_name=company_name,
+            company_analysis=company_analysis,
+            competition_analysis=competition_analysis,
+
+        )
+
+        # Step 5: Generate LLM response
+        refined_text = await generate_llm_response(prompt)
+        
+        # Format sources for the UI.
+        # We ONLY include external references (YouTube/Reddit/Podcasts) as sources
+        # for the UI. User‑uploaded documents are used as hidden context for RAG,
+        # but are not returned as visible "sources" in the result list.
+        logger.info("Formatting sources...")
+        source_docs: list[Any] = []
+        if external_docs:
+            logger.info(f"Including {len(external_docs)} external reference documents as sources (excluding user uploads)")
+            source_docs.extend(external_docs)
+        else:
+            logger.info("No external reference documents found; returning empty sources list (user uploads excluded)")
+
+        sources = format_sources(source_docs)
+        logger.info(
+            f"✓ Formatted {len(sources)} sources "
+            f"(0 user documents, {len(external_docs)} external references)"
+        )
+        
+        # Format retrieved documents for frontend
+        retrieved_docs_formatted = []
+        for doc in retrieved_docs:
+            if hasattr(doc, 'metadata') and hasattr(doc, 'page_content'):
+                doc_dict = {
+                    "page_content": doc.page_content,
+                    "metadata": doc.metadata
+                }
+                retrieved_docs_formatted.append(doc_dict)
+
+
+        
+        # Build email content (always build, but only send if administrator)
+        email_content = ""
         try:
-            email_content = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                                company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context,
-                                                prompt, refined_text, sources, retrieved_docs)
-        except Exception as e2:
-            logger.error(f"Failed to build email content: {e2}", exc_info=True)
-    
-    return refined_text, sources, retrieved_docs_formatted, prompt, email_content
+            email_sent, email_content = send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
+                                                   company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                                                   prompt, refined_text, sources, retrieved_docs, send=is_administrator)
+            if is_administrator:
+                if email_sent:
+                    logger.info("Email sent successfully to administrators")
+                else:
+                    logger.warning("Failed to send email to administrators")
+        except Exception as e:
+            logger.error(f"Email processing failed (non-critical): {e}", exc_info=True)
+            # Still build email content even if sending fails
+            try:
+                email_content = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
+                                                    company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context,
+                                                    prompt, refined_text, sources, retrieved_docs)
+            except Exception as e2:
+                logger.error(f"Failed to build email content: {e2}", exc_info=True)
+        
+        logger.info(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        logger.info(f"<<<<<<<<<<<<<<  RAG Pipeline Completed Successfully <<<<<<<<<<<<<<<<<<<")
+        logger.info(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        
+        return refined_text, sources, retrieved_docs_formatted, prompt, email_content
+    finally:
+        # Always remove from active pipelines, even if there was an error
+        if execution_key in _active_pipelines:
+            del _active_pipelines[execution_key]
+            logger.debug(f"Removed execution key {execution_key[:20]} from active pipelines")
 
 def get_gmail_service():
     """Get authenticated Gmail API service instance."""
