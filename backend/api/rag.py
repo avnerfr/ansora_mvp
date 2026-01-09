@@ -18,7 +18,7 @@ from models import (
 from core.auth import get_current_user, get_cognito_groups_from_token
 from rag.pipeline import process_rag, DEFAULT_TEMPLATE
 from rag.loader import load_document
-from rag.agents import company_analysis_agent, competition_analysis_agent
+from rag.agents import company_analysis_agent
 from rag.s3_utils import get_latest_company_file, save_company_file, get_company_website
 import re
 from core.config import settings
@@ -211,8 +211,7 @@ async def process_marketing_material(
     
     # Get or generate company information
     company_analysis = None
-    competition_analysis = None
-    
+     
     if company_name:
         # Check S3 for existing company information
         company_file = get_latest_company_file(company_name)
@@ -220,17 +219,16 @@ async def process_marketing_material(
         if company_file:
             # Use existing data
             company_analysis = company_file['data'].get('company_analysis')
-            competition_analysis = company_file['data'].get('competition_analysis')
         else:
             # Generate new company information
             logger.info(f"Generating new company information for {company_name}")
             company_website = get_company_website(company_name)
             try:
                 company_analysis = company_analysis_agent(company_name, company_website)
-                competition_analysis = competition_analysis_agent(company_name, company_website)
+                #competition_analysis = competition_analysis_agent(company_name, company_website)
            
                 # Save to S3
-                save_company_file(company_name, company_analysis, competition_analysis)
+                save_company_file(company_name, company_analysis)
                 logger.info(f"Saved company information to S3 for {company_name}")
             except Exception as e:
                 logger.error(f"Error generating company information: {e}")
@@ -266,7 +264,6 @@ async def process_marketing_material(
             template=template,
             company_name=company_name,
             company_analysis=company_analysis,
-            competition_analysis=competition_analysis,
             is_administrator=is_administrator,
             request_id=request_id,  # Pass request_id to track duplicate calls
         )

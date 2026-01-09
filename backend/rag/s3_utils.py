@@ -122,14 +122,13 @@ def get_latest_company_file(company_name: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def save_company_file(company_name: str, company_analysis: str, competition_analysis: str) -> str:
+def save_company_file(company_name: str, company_analysis: str) -> str:
     """
     Save company information to S3.
     
     Args:
         company_name: Company name
         company_analysis: Company analysis from company_analysis_agent
-        competition_analysis: Competition analysis from competition_analysis_agent
         
     Returns:
         S3 file key of saved file
@@ -144,8 +143,7 @@ def save_company_file(company_name: str, company_analysis: str, competition_anal
         data = {
             'company_name': company_name,
             'date': today.isoformat(),
-            'company_analysis': company_analysis,
-            'competition_analysis': competition_analysis
+            'company_analysis': company_analysis
         }
         
         # Upload to S3

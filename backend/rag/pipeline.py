@@ -466,11 +466,17 @@ async def build_retrieval_query(
     # Ensure marketing_text and backgrounds_str are strings and not None
     marketing_text = marketing_text or ""
     backgrounds_str = backgrounds_str or ""
-    # extract json from company_analysis (between ```json and ```)
-    company_json = re.search(r'```json(.*)```', company_analysis, re.DOTALL).group(1)
-    company_json = json.loads(company_json)
-    company_value_proposition = company_json.get('company_value_proposition', '')
-    company_domain = company_json.get('company_domain', '')
+    
+    logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+
+    logger.info(f"Company analysis: {company_analysis}")
+    logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+
+    company_context = json.loads(company_analysis).get('company_context', {})
+
+
+    company_value_proposition = ""# company_context.get('company_value_proposition', '')
+    company_domain =  company_context.get('company_domain', '')
 
     retrieval_prompt = VECTOR_DB_RETREIVAL_PROMPT.format(
         user_provided_text=marketing_text,
@@ -792,6 +798,12 @@ def build_final_prompt(
     
     # Process company analysis if provided
     # Try to extract JSON from company_analysis if it's wrapped in code blocks
+    company_context = json.loads(company_analysis).get('company_context', {})
+
+
+
+
+
     company_info = ""
     company_json = {}
     if company_analysis:
@@ -815,21 +827,6 @@ def build_final_prompt(
             company_info = company_analysis or ""
             company_json = {'company_analysis': company_info}
     
-    # Process competition analysis if provided
-    competition_info = ""
-    if competition_analysis:
-        try:
-            # Check if competition_analysis contains JSON in code blocks
-            json_match = re.search(r'```json\s*(.*?)\s*```', competition_analysis, re.DOTALL)
-            if json_match:
-                competition_info = json_match.group(1).strip()
-            else:
-                # If no JSON blocks, use the analysis as-is
-                competition_info = competition_analysis
-        except Exception as e:
-            logger.warning(f"Error parsing competition analysis: {e}, using as-is")
-            competition_info = competition_analysis or ""
-
 
     # Use icp value for both target_audience and icp for backward compatibility
     icp_value = icp or ''
@@ -847,9 +844,9 @@ def build_final_prompt(
         target_audience=icp_value,  # New format
         icp=icp_value,  # Old format for backward compatibility
         company_analysis=company_info,
-        competition_analysis=competition_info,
         latest_anouncements=company_json.get('latest_anouncements'),
         company_name=company_name,
+        competition_analysis = competition_analysis,
         company_domain=company_json.get('company_domain') or company_json.get('website'),
         company_value_proposition=company_json.get('company_value_proposition'),
     )
@@ -937,12 +934,10 @@ def get_collection_name(company_analysis: str) -> str:
     #collection_names = [c.name for c in collections]
 
     try:
-        company_json = re.search(r'```json(.*)```', company_analysis, re.DOTALL).group(1)
-        company_json = json.loads(company_json)
-        company_domain = company_json.get('company_domain', '')
+        company_context = json.loads(company_analysis).get('company_context', {})
+        company_domain = company_context.get('company_domain', '')
         collection_name = company_domain + "-summaries_1_0"
         logger.info(f"Collection Name: {collection_name}")
-
         return collection_name
     except Exception as e:
         logger.error(f"Error getting collection name: {e}")
@@ -1074,7 +1069,7 @@ async def process_rag(
         email_content = ""
         try:
             email_sent, email_content = send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                                   company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                                                   company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
                                                    prompt, refined_text, sources, retrieved_docs, send=is_administrator)
             if is_administrator:
                 if email_sent:
@@ -1086,7 +1081,7 @@ async def process_rag(
             # Still build email content even if sending fails
             try:
                 email_content = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                                    company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context,
+                                                    company_name, company_analysis,  retrieval_query, retrieval_prompt, vector_search_context,
                                                     prompt, refined_text, sources, retrieved_docs)
             except Exception as e2:
                 logger.error(f"Failed to build email content: {e2}", exc_info=True)
@@ -1131,7 +1126,7 @@ def get_gmail_service():
 
 
 def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template, 
-                        company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                        company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
                         prompt, refined_text, sources, retrieved_docs):
     """Build email content string. Returns the email body as a string."""
     # Build email content
@@ -1143,6 +1138,24 @@ def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, t
     email_body += f"\nCompany Name: {company_name}"
     email_body += f"\n\n------------------------------------------------\n"
     
+
+    company_context = json.loads(company_analysis).get('company_context', {})
+    company_value_proposition = company_context.get('company_value_proposition', '')
+    company_domain = company_context.get('company_domain', '')
+    company_competitors = company_context.get('known_competitors', [])
+    company_latest_anouncements = company_context.get('latest_anouncements', [])
+    company_operational_pains = company_context.get('operational_pains', [])
+    company_target_audience = company_context.get('target_audience', [])
+
+    email_body += f"\nCompany Value Proposition: {company_value_proposition}"
+    email_body += f"\nCompany Domain: {company_domain}"
+    email_body += f"\nCompany Competitors: {company_competitors}"
+    email_body += f"\nCompany Latest Anouncements: {company_latest_anouncements}"
+    email_body += f"\nCompany Operational Pains: {company_operational_pains}"
+    email_body += f"\nCompany Target Audience: {company_target_audience}"
+
+
+
     # Handle company_analysis - extract JSON if present, otherwise use raw text
     if company_analysis:
         try:
@@ -1160,8 +1173,6 @@ def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, t
         email_body += f"\nCompany Analysis: Not available"
     
     email_body += f"\n\n------------------------------------------------\n"
-    email_body += f"\nCompetition Analysis:\n{competition_analysis if competition_analysis else 'Not available'}"
-    email_body += f"\n\n------------------------------------------------\n"
     email_body += f"\nRetrieval Prompt:\n{retrieval_prompt}"
     email_body += f"\n\n------------------------------------------------\n"
     email_body += f"\nRetrieval Query:\n{retrieval_query}"
@@ -1177,7 +1188,7 @@ def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, t
 
 
 def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template, 
-                company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
                 prompt, refined_text, sources, retrieved_docs, send: bool = True):
     """Send email notification using Gmail API. Returns (success: bool, email_content: str)."""
     logger.info(f"Attempting to send email notification via Gmail API...")
@@ -1186,7 +1197,7 @@ def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
     
     # Build email content
     email_body = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                     company_name, company_analysis, competition_analysis, retrieval_query, retrieval_prompt, vector_search_context,
+                                     company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context,
                                      prompt, refined_text, sources, retrieved_docs)
     
     # If not sending, just return the content
