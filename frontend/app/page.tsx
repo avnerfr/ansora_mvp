@@ -34,18 +34,22 @@ function HomePageContent() {
   const COMPANY_OPTIONS = ['Algosec', 'CyberArk', 'JFrog', 'Cloudinary', 'Incredibuild']
 
   // Define fetch functions before they're used in useEffect
-  const fetchICPsForCompany = async (companyName: string) => {
+  const fetchCompanyData = async (companyName: string) => {
     if (!companyName) return
     
     setIsLoadingICPs(true)
+    setIsLoadingOperationalPains(true)
+    
     try {
-      const response = await ragAPI.getICPs(companyName)
-      // Handle both 'icps' and 'target_audience' response formats
-      const options = response?.icps || response?.target_audience || []
-      if (options && options.length > 0) {
-        setIcpOptions(options)
+      const response = await ragAPI.getCompanyData(companyName)
+      
+      // Set target audience (ICPs)
+      if (response && response.target_audience && response.target_audience.length > 0) {
+        setIcpOptions(response.target_audience)
+        console.log('✓ Loaded target_audience from S3:', response.target_audience)
       } else {
         // Fallback to default ICPs
+        console.warn('No target_audience in S3, using defaults')
         setIcpOptions([
           "Network & Security Operations",
           "Application & Service Delivery",
@@ -54,9 +58,26 @@ function HomePageContent() {
           "Risk and Compliance"
         ])
       }
+      
+      // Set operational pains
+      if (response && response.operational_pains && response.operational_pains.length > 0) {
+        setOperationalPainOptions(response.operational_pains)
+        console.log('✓ Loaded operational_pains from S3:', response.operational_pains)
+      } else {
+        // Fallback to default operational pains
+        console.warn('No operational_pains in S3, using defaults')
+        setOperationalPainOptions([
+          "Network visibility gaps during incidents",
+          "Configuration drift and compliance failures",
+          "Alert fatigue and false positives",
+          "Slow incident response times",
+          "Cloud security misconfigurations"
+        ])
+      }
+      
     } catch (error) {
-      console.error('Error fetching ICPs:', error)
-      // Fallback to default ICPs on error
+      console.error('Error fetching company data:', error)
+      // Fallback to defaults on error
       setIcpOptions([
         "Network & Security Operations",
         "Application & Service Delivery",
@@ -64,54 +85,17 @@ function HomePageContent() {
         "CISO",
         "Risk and Compliance"
       ])
-    } finally {
-      setIsLoadingICPs(false)
-    }
-  }
-
-  const fetchOperationalPainsForCompany = async (companyName: string) => {
-    if (!companyName) return
-    
-    setIsLoadingOperationalPains(true)
-    try {
-      const response = await ragAPI.getOperationalPains(companyName)
-      if (response && response.operational_pains) {
-        setOperationalPainOptions(response.operational_pains)
-      } else {
-        // Fallback to default pain points
-        setOperationalPainOptions([
-          "Afraid to push a network change without knowing what will break",
-          "Security changes get stuck in CAB because no one can prove safety",
-          "Cannot verify that network policies actually work as intended",
-          "Rules accumulated over time that nobody understands or owns",
-          "Afraid to remove access because the real dependencies are unknown",
-          "Cloud and on-prem environments behave differently under the same policy",
-          "Audits fail because policy intent cannot be proven"
-        ])
-      }
-    } catch (error) {
-      console.error('Error fetching operational pain points:', error)
-      // Fallback to default pain points on error
       setOperationalPainOptions([
-        "Afraid to push a network change without knowing what will break",
-        "Security changes get stuck in CAB because no one can prove safety",
-        "Cannot verify that network policies actually work as intended",
-        "Rules accumulated over time that nobody understands or owns",
-        "Afraid to remove access because the real dependencies are unknown",
-        "Cloud and on-prem environments behave differently under the same policy",
-        "Audits fail because policy intent cannot be proven"
+        "Network visibility gaps during incidents",
+        "Configuration drift and compliance failures",
+        "Alert fatigue and false positives",
+        "Slow incident response times",
+        "Cloud security misconfigurations"
       ])
     } finally {
+      setIsLoadingICPs(false)
       setIsLoadingOperationalPains(false)
     }
-  }
-
-  const fetchCompanyData = async (companyName: string) => {
-    // Fetch both ICPs and operational pain points in parallel
-    await Promise.all([
-      fetchICPsForCompany(companyName),
-      fetchOperationalPainsForCompany(companyName)
-    ])
   }
 
   // Handle Cognito callback - if there's a code parameter, redirect to callback API

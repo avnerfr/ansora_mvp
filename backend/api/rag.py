@@ -376,8 +376,8 @@ async def get_results(
     )
 
 
-@router.get("/icps/{company_name}")
-async def get_icps_for_company(
+@router.get("/company-data/{company_name}")
+async def get_company_data(
     company_name: str,
     current_user: User = Depends(get_current_user),
     credentials: HTTPAuthorizationCredentials = Depends(security)
@@ -394,285 +394,44 @@ async def get_icps_for_company(
     try:
         # Get company information from S3
         company_file = get_latest_company_file(company_name)
-        
-        if not company_file or 'data' not in company_file:
-            logger.warning(f"No company information found for {company_name}, returning default ICPs")
-            # Return default ICPs if company info not found
-            default_icps = [
-                "Network & Security Operations",
-                "Application & Service Delivery",
-                "CIO",
-                "CISO",
-                "Risk and Compliance"
-            ]
-            return {
-                "icps": default_icps,
-                "target_audience": default_icps  # Also return as target_audience for compatibility
-            }
-        
+        #logger.info(f"Company file: {company_file}")
+      
+
+        # strip ```json and ``` from the company_file['data']
         company_data = company_file['data']
-        company_analysis = company_data.get('company_analysis', '')
-        
-        # Extract company_domain from company_analysis JSON
-        company_domain = None
-        if company_analysis:
-            try:
-                # Try to extract JSON from company_analysis
-                json_match = re.search(r'```json\s*(.*?)\s*```', company_analysis, re.DOTALL)
-                if json_match:
-                    company_json = json.loads(json_match.group(1).strip())
-                    company_domain = company_json.get('company_domain', '')
-                else:
-                    # Try parsing as direct JSON
-                    company_json = json.loads(company_analysis)
-                    company_domain = company_json.get('company_domain', '')
-            except (json.JSONDecodeError, AttributeError) as e:
-                logger.warning(f"Error parsing company_analysis for {company_name}: {e}")
-        
-        # Map domain to ICPs
-        # This is a basic mapping - can be extended or stored in company info
-        domain_to_icps = {
-            'cybersecurity': [
-                "Network & Security Operations",
-                "CISO",
-                "Security Operations",
-                "Risk and Compliance"
-            ],
-            'software_developement_optimization': [
-                "Software Engineer",
-                "Engineering Manager",
-                "Backend Engineer",
-                "Game Developer",
-                "Embedded / Firmware Engineer",
-                "Build Engineer",
-                "CI Engineer",
-                "DevOps Engineer",
-                "Platform Engineer",
-                "QA Automation Engineer",
-            ],
-            'cloud_computing': [
-                "Cloud Operations",
-                "DevOps",
-                "CIO",
-                "Application & Service Delivery"
-            ],
-            'devops': [
-                "DevOps",
-                "Application & Service Delivery",
-                "CIO",
-                "Platform Engineering"
-            ],
-            'infrastructure': [
-                "Network & Security Operations",
-                "Infrastructure Operations",
-                "CIO",
-                "Application & Service Delivery"
-            ],
-            'compliance': [
-                "Risk and Compliance",
-                "CISO",
-                "CIO",
-                "Governance"
-            ]
-        }
-        
-        # Default ICPs if domain not found
-        default_icps = [
-            "Network & Security Operations",
-            "Application & Service Delivery",
-            "CIO",
-            "CISO",
-            "Risk and Compliance"
-        ]
-        
-        # Find matching ICPs based on domain
-        icps = default_icps
-        if company_domain:
-            company_domain_lower = company_domain.lower().replace(' ', '_')
-            # Check for exact match or partial match
-            for domain_key, domain_icps in domain_to_icps.items():
-                if domain_key in company_domain_lower or company_domain_lower in domain_key:
-                    icps = domain_icps
-                    break
-        
-        logger.info(f"Returning ICPs for {company_name} (domain: {company_domain}): {icps}")
+        logger.info(f"Company data found: {company_data}")
+        company_analysis = json.loads(company_data.get('company_analysis', {}))
+        logger.info(f"Company analysis found: {company_analysis}")
+        company_context = company_analysis.get('company_context', {})
+        logger.info(f"Company context found: {company_context}")
+        target_audience = company_context.get('target_audience', [])
+        logger.info(f"Target audience found: {target_audience}")
+        operational_pains = company_context.get('operational_pains', [])
+        logger.info(f"Operational pains found: {operational_pains}")
+
         return {
-            "icps": icps,
-            "target_audience": icps  # Also return as target_audience for compatibility
+            "target_audience": target_audience,
+            "operational_pains": operational_pains
         }
-        
+
     except Exception as e:
-        logger.error(f"Error getting ICPs for company {company_name}: {e}", exc_info=True)
-        # Return default ICPs on error
-        default_icps = [
-            "Network & Security Operations",
-            "Application & Service Delivery",
-            "CIO",
-            "CISO",
-            "Risk and Compliance"
-        ]
-        return {
-            "icps": default_icps,
-            "target_audience": default_icps  # Also return as target_audience for compatibility
-        }
-
-
-@router.get("/operational-pains/{company_name}")
-async def get_operational_pains_for_company(
-    company_name: str,company_file,
-    current_user: User = Depends(get_current_user),
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    """
-    Get Operational Pain Points for a company based on its domain.
-    
-    Args:
-        company_name: Company name
-        
-    Returns:
-        List of operational pain points for the company
-    """
-    try:
-        # Get company information from S3
-        company_file = get_latest_company_file(company_name)
-        
+        logger.error(f"Error getting company data for {company_name}: {e}", exc_info=True)
         if not company_file or 'data' not in company_file:
-            logger.warning(f"No company information found for {company_name}, returning default pain points")
-            # Return default pain points if company info not found
-            return {
+            logger.warning(f"No company information found for {company_name}, returning defaults")
+        return {
+                "target_audience": [
+                    "Network & Security Operations",
+                    "Application & Service Delivery",
+                    "CIO",
+                    "CISO",
+                    "Risk and Compliance"
+                ],
                 "operational_pains": [
-                    "Afraid to push a network change without knowing what will break",
-                    "Security changes get stuck in CAB because no one can prove safety",
-                    "Cannot verify that network policies actually work as intended",
-                    "Rules accumulated over time that nobody understands or owns",
-                    "Afraid to remove access because the real dependencies are unknown",
-                    "Cloud and on-prem environments behave differently under the same policy",
-                    "Audits fail because policy intent cannot be proven"
+                    "Network visibility gaps during incidents",
+                    "Configuration drift and compliance failures",
+                    "Alert fatigue and false positives",
+                    "Slow incident response times",
+                    "Cloud security misconfigurations"
                 ]
-            }
-        
-        company_data = company_file['data']
-        company_analysis = company_data.get('company_analysis', '')
-        
-        # Extract company_domain from company_analysis JSON
-        company_domain = None
-        if company_analysis:
-            try:
-                # Try to extract JSON from company_analysis
-                json_match = re.search(r'```json\s*(.*?)\s*```', company_analysis, re.DOTALL)
-                if json_match:
-                    company_json = json.loads(json_match.group(1).strip())
-                    company_domain = company_json.get('company_domain', '')
-                else:
-                    # Try parsing as direct JSON
-                    company_json = json.loads(company_analysis)
-                    company_domain = company_json.get('company_domain', '')
-            except (json.JSONDecodeError, AttributeError) as e:
-                logger.warning(f"Error parsing company_analysis for {company_name}: {e}")
-        
-        # Map domain to operational pain points
-        domain_to_pains = {
-            'cybersecurity': [
-                "Afraid to push a network change without knowing what will break",
-                "Security changes get stuck in CAB because no one can prove safety",
-                "Cannot verify that network policies actually work as intended",
-                "Rules accumulated over time that nobody understands or owns",
-                "Afraid to remove access because the real dependencies are unknown",
-                "Cloud and on-prem environments behave differently under the same policy",
-                "Audits fail because policy intent cannot be proven"
-            ],
-            'network_security': [
-                "Afraid to push a network change without knowing what will break",
-                "Security changes get stuck in CAB because no one can prove safety",
-                "Cannot verify that network policies actually work as intended",
-                "Rules accumulated over time that nobody understands or owns",
-                "Afraid to remove access because the real dependencies are unknown",
-                "Cloud and on-prem environments behave differently under the same policy",
-                "Audits fail because policy intent cannot be proven"
-            ],
-            'software_developement_optimization': [
-                "Build times are too slow, blocking developer productivity",
-                "Cannot reproduce build failures locally",
-                "CI/CD pipelines are flaky and unreliable",
-                "Code compilation takes too long, disrupting workflow",
-                "Cannot parallelize builds effectively",
-                "Build artifacts are inconsistent across environments",
-                "Integration tests take too long to run"
-            ],
-            'cloud_computing': [
-                "Cloud costs are unpredictable and hard to control",
-                "Cannot track which services are driving costs",
-                "Multi-cloud environments behave inconsistently",
-                "Cloud resource provisioning is slow and error-prone",
-                "Cannot verify cloud security policies work as intended",
-                "Cloud and on-prem environments are difficult to manage together",
-                "Cloud resource visibility is limited"
-            ],
-            'devops': [
-                "Deployments are slow and risky",
-                "Cannot reproduce production issues locally",
-                "CI/CD pipelines are unreliable",
-                "Infrastructure changes are difficult to track and revert",
-                "Configuration drift causes unexpected failures",
-                "Cannot scale infrastructure quickly when needed",
-                "Monitoring and alerting gaps cause delayed incident response"
-            ],
-            'infrastructure': [
-                "Infrastructure changes are risky and time-consuming",
-                "Cannot verify changes won't break production",
-                "Configuration drift causes unexpected behavior",
-                "Infrastructure visibility is limited",
-                "Changes take too long to implement and validate",
-                "Cannot track infrastructure dependencies",
-                "Infrastructure documentation is outdated or missing"
-            ],
-            'compliance': [
-                "Audits fail because policy intent cannot be proven",
-                "Cannot demonstrate compliance with regulatory requirements",
-                "Compliance checks are manual and error-prone",
-                "Cannot track compliance status across systems",
-                "Policy violations are discovered too late",
-                "Compliance reporting is time-consuming and inaccurate",
-                "Cannot verify that controls are working as intended"
-            ]
         }
-        
-        # Default pain points if domain not found
-        default_pains = [
-            "Afraid to push a network change without knowing what will break",
-            "Security changes get stuck in CAB because no one can prove safety",
-            "Cannot verify that network policies actually work as intended",
-            "Rules accumulated over time that nobody understands or owns",
-            "Afraid to remove access because the real dependencies are unknown",
-            "Cloud and on-prem environments behave differently under the same policy",
-            "Audits fail because policy intent cannot be proven"
-        ]
-        
-        # Find matching pain points based on domain
-        pains = default_pains
-        if company_domain:
-            company_domain_lower = company_domain.lower().replace(' ', '_')
-            # Check for exact match or partial match
-            for domain_key, domain_pains in domain_to_pains.items():
-                if domain_key in company_domain_lower or company_domain_lower in domain_key:
-                    pains = domain_pains
-                    break
-        
-        logger.info(f"Returning operational pain points for {company_name} (domain: {company_domain}): {len(pains)} points")
-        return {"operational_pains": pains}
-        
-    except Exception as e:
-        logger.error(f"Error getting operational pain points for company {company_name}: {e}", exc_info=True)
-        # Return default pain points on error
-        return {
-            "operational_pains": [
-                "Afraid to push a network change without knowing what will break",
-                "Security changes get stuck in CAB because no one can prove safety",
-                "Cannot verify that network policies actually work as intended",
-                "Rules accumulated over time that nobody understands or owns",
-                "Afraid to remove access because the real dependencies are unknown",
-                "Cloud and on-prem environments behave differently under the same policy",
-                "Audits fail because policy intent cannot be proven"
-            ]
-        }
-
+            

@@ -129,12 +129,8 @@ export const ragAPI = {
     })
     return response.data
   },
-  getICPs: async (companyName: string) => {
-    const response = await apiClient.get(`/rag/icps/${companyName}`)
-    return response.data
-  },
-  getOperationalPains: async (companyName: string) => {
-    const response = await apiClient.get(`/rag/operational-pains/${companyName}`)
+  getCompanyData: async (companyName: string) => {
+    const response = await apiClient.get(`/rag/company-data/${companyName}`)
     return response.data
   },
 }
