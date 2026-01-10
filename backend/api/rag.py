@@ -210,26 +210,30 @@ async def process_marketing_material(
             logger.warning("No company found in Cognito groups and no company in request")
     
     # Get or generate company information
+    company_details = None
     company_analysis = None
      
     if company_name:
-        # Check S3 for existing company information
-        company_file = get_latest_company_file(company_name)
+        # Check S3 for existing company information (returns CompanyDetails object)
+        company_details = get_latest_company_file(company_name)
         
-        if company_file:
-            # Use existing data
-            company_analysis = company_file['data'].get('company_analysis')
+        if company_details:
+            # We have a CompanyDetails object - extract company_analysis string if needed for pipeline
+            # For now, we'll pass the CompanyDetails object to the pipeline
+            logger.info(f"Using existing company details for {company_name}")
         else:
             # Generate new company information
             logger.info(f"Generating new company information for {company_name}")
             company_website = get_company_website(company_name)
             try:
                 company_analysis = company_analysis_agent(company_name, company_website)
-                #competition_analysis = competition_analysis_agent(company_name, company_website)
            
                 # Save to S3
                 save_company_file(company_name, company_analysis)
                 logger.info(f"Saved company information to S3 for {company_name}")
+                
+                # Load the newly saved file as CompanyDetails
+                company_details = get_latest_company_file(company_name)
             except Exception as e:
                 logger.error(f"Error generating company information: {e}")
                 # Continue without company information rather than failing
@@ -263,7 +267,7 @@ async def process_marketing_material(
             icp=request.icp,
             template=template,
             company_name=company_name,
-            company_analysis=company_analysis,
+            company_details=company_details,
             is_administrator=is_administrator,
             request_id=request_id,  # Pass request_id to track duplicate calls
         )
@@ -380,42 +384,22 @@ async def get_company_data(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
     """
-    Get ICPs (Target Audience) for a company based on its domain.
+    Get company data (target_audience and operational_pains) from S3.
+    Returns data from CompanyDetails object.
     
     Args:
         company_name: Company name
         
     Returns:
-        List of ICPs for the company
+        Dict with target_audience and operational_pains arrays
     """
     try:
-        # Get company information from S3
-        company_file = get_latest_company_file(company_name)
-        #logger.info(f"Company file: {company_file}")
-      
-
-        # strip ```json and ``` from the company_file['data']
-        company_data = company_file['data']
-        logger.info(f"Company data found: {company_data}")
-        company_analysis = json.loads(company_data.get('company_analysis', {}))
-        logger.info(f"Company analysis found: {company_analysis}")
-        company_context = company_analysis.get('company_context', {})
-        logger.info(f"Company context found: {company_context}")
-        target_audience = company_context.get('target_audience', [])
-        logger.info(f"Target audience found: {target_audience}")
-        operational_pains = company_context.get('operational_pains', [])
-        logger.info(f"Operational pains found: {operational_pains}")
-
-        return {
-            "target_audience": target_audience,
-            "operational_pains": operational_pains
-        }
-
-    except Exception as e:
-        logger.error(f"Error getting company data for {company_name}: {e}", exc_info=True)
-        if not company_file or 'data' not in company_file:
+        # Get company details from S3 as CompanyDetails object
+        company_details = get_latest_company_file(company_name)
+        
+        if not company_details:
             logger.warning(f"No company information found for {company_name}, returning defaults")
-        return {
+            return {
                 "target_audience": [
                     "Network & Security Operations",
                     "Application & Service Delivery",
@@ -430,5 +414,37 @@ async def get_company_data(
                     "Slow incident response times",
                     "Cloud security misconfigurations"
                 ]
+            }
+        
+        # Extract from CompanyDetails object - clean and simple
+        target_audience = company_details.company_context.target_audience
+        operational_pains = company_details.company_context.operational_pains
+        
+        logger.info(f"✓ Returning company data for {company_name}: "
+                   f"{len(target_audience)} target audiences, "
+                   f"{len(operational_pains)} operational pains")
+        
+        return {
+            "target_audience": target_audience,
+            "operational_pains": operational_pains
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting company data for {company_name}: {e}", exc_info=True)
+        return {
+            "target_audience": [
+                "Network & Security Operations",
+                "Application & Service Delivery",
+                "CIO",
+                "CISO",
+                "Risk and Compliance"
+            ],
+            "operational_pains": [
+                "Network visibility gaps during incidents",
+                "Configuration drift and compliance failures",
+                "Alert fatigue and false positives",
+                "Slow incident response times",
+                "Cloud security misconfigurations"
+            ]
         }
             

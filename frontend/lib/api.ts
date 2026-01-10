@@ -208,6 +208,37 @@ export const maintenanceAPI = {
     })
     return response.data
   },
+  // Prompts management
+  getTemplateNames: async () => {
+    const response = await apiClient.get('/maintenance/prompts/template-names')
+    return response.data
+  },
+  getEditors: async (templateName: string) => {
+    const response = await apiClient.get('/maintenance/prompts/editors', {
+      params: { template_name: templateName }
+    })
+    return response.data
+  },
+  getTemplateVersions: async (templateName: string, editedBy?: string) => {
+    const response = await apiClient.get('/maintenance/prompts/versions', {
+      params: { template_name: templateName, edited_by: editedBy }
+    })
+    return response.data
+  },
+  getTemplate: async (templateName: string, editedAtIso: number) => {
+    const response = await apiClient.get('/maintenance/prompts/template', {
+      params: { template_name: templateName, edited_at_iso: editedAtIso }
+    })
+    return response.data
+  },
+  updateTemplate: async (templateName: string, templateBody: string, editComment?: string) => {
+    const response = await apiClient.post('/maintenance/prompts/template', {
+      template_name: templateName,
+      template_body: templateBody,
+      edit_comment: editComment || ''
+    })
+    return response.data
+  },
 }
 
 export default apiClient

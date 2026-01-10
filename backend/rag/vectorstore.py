@@ -165,6 +165,98 @@ class VectorStore:
         """Get the Qdrant collection name for a user."""
         return f"user_{user_id}_documents"
     
+    def resolve_collection_name(self, domain: str, suffix: str = "summaries_1_0") -> str:
+        """
+        Resolve the correct collection name from domain, trying all possible variations.
+        Domain may contain spaces, underscores, or hyphens in any combination.
+        Qdrant collection names may use any of these separators.
+        
+        Args:
+            domain: Company domain (e.g., "Cloud Media Management", "software_developement_optimization")
+            suffix: Collection suffix (default: "summaries_1_0")
+            
+        Returns:
+            The first matching collection name found in Qdrant, or the lowercase underscore version as fallback
+        """
+        if not domain:
+            logger.warning("Empty domain provided to resolve_collection_name")
+            return None
+        
+        # Generate all possible variations of the domain
+        variations = self._generate_domain_variations(domain)
+        
+        # Append suffix to each variation
+        collection_candidates = [f"{var}-{suffix}" for var in variations]
+        
+        # Add variations with underscore separator too
+        collection_candidates.extend([f"{var}_{suffix}" for var in variations])
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        collection_candidates = [x for x in collection_candidates if not (x in seen or seen.add(x))]
+        
+        logger.info(f"Checking {len(collection_candidates)} possible collection names for domain '{domain}'")
+        logger.debug(f"Collection candidates: {collection_candidates[:5]}...")  # Log first 5
+        
+        try:
+            # Get all existing collections from Qdrant
+            collections = self.client.get_collections().collections
+            existing_collection_names = [c.name for c in collections]
+            logger.debug(f"Found {len(existing_collection_names)} existing collections in Qdrant")
+            
+            # Try to find a match
+            for candidate in collection_candidates:
+                if candidate in existing_collection_names:
+                    logger.info(f"✓ Resolved collection name: '{candidate}' for domain '{domain}'")
+                    return candidate
+            
+            # No match found - return the most common format as fallback
+            fallback = f"{domain.lower().replace(' ', '_').replace('-', '_')}-{suffix}"
+            logger.warning(f"No matching collection found for domain '{domain}'. Using fallback: '{fallback}'")
+            logger.debug(f"Available collections: {existing_collection_names[:10]}")
+            return fallback
+            
+        except Exception as e:
+            logger.error(f"Error resolving collection name: {e}", exc_info=True)
+            # Return fallback on error
+            fallback = f"{domain.lower().replace(' ', '_').replace('-', '_')}-{suffix}"
+            return fallback
+    
+    def _generate_domain_variations(self, domain: str) -> List[str]:
+        """
+        Generate all possible variations of a domain string with different separators.
+        
+        Examples:
+            "Cloud Media Management" → ["cloud-media-management", "cloud_media_management", "cloudmediamanagement", ...]
+            "software_developement_optimization" → ["software-developement-optimization", "software_developement_optimization", ...]
+        """
+        # Normalize to lowercase
+        domain_lower = domain.lower()
+        
+        # Split by any separator (space, underscore, hyphen)
+        parts = re.split(r'[\s_-]+', domain_lower)
+        
+        # Generate variations:
+        # 1. hyphen-separated
+        # 2. underscore-separated
+        # 3. no separator (concatenated)
+        # 4. Original format preserved (if it had specific separators)
+        
+        variations = [
+            '-'.join(parts),          # hyphen-separated
+            '_'.join(parts),          # underscore-separated
+            ''.join(parts),           # no separator
+            domain_lower.replace(' ', '-').replace('_', '-'),   # all hyphens
+            domain_lower.replace(' ', '_').replace('-', '_'),   # all underscores
+            domain_lower.replace(' ', '').replace('_', '').replace('-', ''),  # no separators
+        ]
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_variations = [x for x in variations if x and not (x in seen or seen.add(x))]
+        
+        return unique_variations
+    
     def create_collection_if_not_exists(self, user_id: int, vector_size: int = None):
         """Create a Qdrant collection for a user if it doesn't exist."""
         if vector_size is None:
@@ -227,7 +319,7 @@ class VectorStore:
     def search_doc_type(self, query: str, k: int = 3, doc_type: str = "reddit_post", company_enumerations: List[str] = [], collection_name: str = None, company_name: str = None) -> List[Document]:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
-            logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}, doc_type={doc_type}, company_name={company_name}")
+            logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}, doc_type={doc_type}, company_name={company_name}, collection={collection_name}")
 
             embeddings = self.embeddings  # OpenAI embeddings
             if embeddings is None:

@@ -5,7 +5,8 @@ import boto3
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from dataclasses import dataclass
 from botocore.exceptions import ClientError
 import os
 
@@ -13,6 +14,77 @@ logger = logging.getLogger(__name__)
 
 # S3 bucket name
 S3_BUCKET = "ansora-company-information"
+
+
+@dataclass
+class CompanyContext:
+    """Company context extracted from company_analysis"""
+    company_name: str
+    company_domain: str
+    self_described_positioning: str
+    product_surface_names: List[str]
+    typical_use_cases: List[str]
+    known_competitors: List[str]
+    target_audience: List[str]
+    operational_pains: List[str]
+    usage_rules: List[str]
+
+
+@dataclass
+class CompanyDetails:
+    """Complete company details from S3"""
+    company_name: str
+    date: str
+    company_context: CompanyContext
+    
+    @classmethod
+    def from_s3_data(cls, s3_data: Dict[str, Any]) -> Optional['CompanyDetails']:
+        """
+        Parse S3 company file data into CompanyDetails object.
+        
+        Args:
+            s3_data: Raw data from S3 file containing company_name, date, and company_analysis
+            
+        Returns:
+            CompanyDetails object or None if parsing fails
+        """
+        try:
+            company_name = s3_data.get('company_name', '')
+            date = s3_data.get('date', '')
+            company_analysis_str = s3_data.get('company_analysis', '')
+            
+            # Parse the nested JSON string in company_analysis
+            if isinstance(company_analysis_str, str):
+                company_analysis = json.loads(company_analysis_str)
+            else:
+                company_analysis = company_analysis_str
+            
+            # Extract company_context
+            context_data = company_analysis.get('company_context', {})
+            usage_rules = company_analysis.get('usage_rules', [])
+            
+            company_context = CompanyContext(
+                company_name=context_data.get('company_name', company_name),
+                company_domain=context_data.get('company_domain', ''),
+                self_described_positioning=context_data.get('self_described_positioning', ''),
+                product_surface_names=context_data.get('product_surface_names', []),
+                typical_use_cases=context_data.get('typical_use_cases', []),
+                known_competitors=context_data.get('known_competitors', []),
+                target_audience=context_data.get('target_audience', []),
+                operational_pains=context_data.get('operational_pains', []),
+                usage_rules=usage_rules
+            )
+            
+            return cls(
+                company_name=company_name,
+                date=date,
+                company_context=company_context
+            )
+            
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.error(f"Error parsing company data: {e}", exc_info=True)
+            return None
+
 
 # Initialize S3 client
 def get_s3_client():
@@ -50,15 +122,15 @@ def format_filename(company_name: str, date: datetime) -> str:
     return f"{company_name}-{date_str}.json"
 
 
-def get_latest_company_file(company_name: str) -> Optional[Dict[str, Any]]:
+def get_latest_company_file(company_name: str) -> Optional[CompanyDetails]:
     """
-    Get the latest company information file from S3.
+    Get the latest company information from S3 as a CompanyDetails object.
     
     Args:
         company_name: Company name
         
     Returns:
-        Dictionary with 'file_key', 'date', and 'data' if found, None otherwise
+        CompanyDetails object, or None if not found
     """
     try:
         s3_client = get_s3_client()
@@ -104,12 +176,17 @@ def get_latest_company_file(company_name: str) -> Optional[Dict[str, Any]]:
         file_content = obj_response['Body'].read().decode('utf-8')
         data = json.loads(file_content)
         
-        logger.info(f"Found valid company file for {company_name} dated {latest_date}")
-        return {
-            'file_key': latest_file,
-            'date': latest_date,
-            'data': data
-        }
+        # Parse into CompanyDetails object
+        company_details = CompanyDetails.from_s3_data(data)
+        
+        if company_details:
+            logger.info(f"✓ Loaded company details for {company_name}: "
+                       f"{len(company_details.company_context.target_audience)} target audiences, "
+                       f"{len(company_details.company_context.operational_pains)} operational pains")
+        else:
+            logger.warning(f"Failed to parse company details for {company_name}")
+        
+        return company_details
         
     except ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchBucket':
@@ -118,7 +195,7 @@ def get_latest_company_file(company_name: str) -> Optional[Dict[str, Any]]:
             logger.error(f"Error accessing S3: {e}")
         return None
     except Exception as e:
-        logger.error(f"Error getting company file: {e}")
+        logger.error(f"Error getting company file: {e}", exc_info=True)
         return None
 
 
@@ -128,7 +205,7 @@ def save_company_file(company_name: str, company_analysis: str) -> str:
     
     Args:
         company_name: Company name
-        company_analysis: Company analysis from company_analysis_agent
+        company_analysis: Company analysis JSON string from company_analysis_agent
         
     Returns:
         S3 file key of saved file
@@ -194,4 +271,3 @@ def get_company_website(company_name: str) -> str:
     # Default: construct from company name
     normalized = company_name.lower().replace(' ', '')
     return f"https://{normalized}.com"
-

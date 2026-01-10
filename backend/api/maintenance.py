@@ -10,10 +10,14 @@ from rag.vectorstore import vector_store
 from rag.process_and_upsert_reddit import process_and_upsert_reddit
 from rag.process_and_upsert_youtube import process_and_upsert_youtube
 from rag.process_and_upsert_podcast import process_and_upsert_podcast
+from rag.dynamodb_prompts import get_latest_prompt_template, AWS_REGION
 import json
 import logging
 import httpx
 import os
+import boto3
+import time
+from decimal import Decimal
 
 project_root = Path(__file__).parent.parent.parent
 env_path = project_root / ".env"
@@ -855,4 +859,205 @@ async def get_model_cost_endpoint(
     """Get cost information for a specific model."""
     cost = get_model_cost(vendor.lower(), model)
     return {"vendor": vendor, "model": model, "cost": cost}
+
+
+# ============================================================================
+# Prompt Templates Management Endpoints
+# ============================================================================
+
+class PromptTemplateUpdate(BaseModel):
+    template_name: str
+    template_body: str
+    edit_comment: Optional[str] = None
+
+
+def _convert_decimal_to_native(obj):
+    """Recursively convert Decimal types to int/float for JSON serialization."""
+    if isinstance(obj, list):
+        return [_convert_decimal_to_native(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: _convert_decimal_to_native(value) for key, value in obj.items()}
+    elif isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    return obj
+
+
+@router.get("/prompts/template-names")
+async def get_template_names(current_user: User = Depends(require_admin)):
+    """Get unique template names from DynamoDB."""
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table('prompts_templates_tbl')
+        
+        # Scan to get all items
+        response = table.scan(ProjectionExpression='template_name')
+        items = response.get('Items', [])
+        
+        # Handle pagination if needed
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(
+                ProjectionExpression='template_name',
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response.get('Items', []))
+        
+        # Get unique template names
+        template_names = sorted(list(set(item['template_name'] for item in items)))
+        
+        logger.info(f"Retrieved {len(template_names)} unique template names")
+        return {"template_names": template_names}
+    except Exception as e:
+        logger.error(f"Failed to get template names: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prompts/editors")
+async def get_editors(
+    template_name: str,
+    current_user: User = Depends(require_admin)
+):
+    """Get unique editors for a specific template."""
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table('prompts_templates_tbl')
+        
+        # Query by template_name
+        response = table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('template_name').eq(template_name),
+            ProjectionExpression='edited_by_sub'
+        )
+        
+        items = response.get('Items', [])
+        
+        # Get unique editors
+        editors = sorted(list(set(item.get('edited_by_sub', 'unknown') for item in items)))
+        
+        logger.info(f"Retrieved {len(editors)} unique editors for template: {template_name}")
+        return {"editors": editors}
+    except Exception as e:
+        logger.error(f"Failed to get editors: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prompts/versions")
+async def get_template_versions(
+    template_name: str,
+    edited_by: Optional[str] = None,
+    current_user: User = Depends(require_admin)
+):
+    """Get versions (edited_at_iso timestamps) for a template, optionally filtered by editor."""
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table('prompts_templates_tbl')
+        
+        # Query by template_name
+        response = table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('template_name').eq(template_name)
+        )
+        
+        items = response.get('Items', [])
+        
+        # Filter by editor if specified
+        if edited_by:
+            items = [item for item in items if item.get('edited_by_sub') == edited_by]
+        
+        # Convert to serializable format and sort by edited_at_iso descending
+        versions = []
+        for item in items:
+            versions.append({
+                'edited_at_iso': _convert_decimal_to_native(item.get('edited_at_iso')),
+                'edited_by_sub': item.get('edited_by_sub', 'unknown'),
+                'edit_comment': item.get('edit_comment', '')
+            })
+        
+        # Sort by timestamp descending (newest first)
+        versions.sort(key=lambda x: x['edited_at_iso'], reverse=True)
+        
+        logger.info(f"Retrieved {len(versions)} versions for template: {template_name}")
+        return {"versions": versions}
+    except Exception as e:
+        logger.error(f"Failed to get template versions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/prompts/template")
+async def get_template(
+    template_name: str,
+    edited_at_iso: int,
+    current_user: User = Depends(require_admin)
+):
+    """Get a specific template version."""
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table('prompts_templates_tbl')
+        
+        # Get specific item by partition key and sort key
+        response = table.get_item(
+            Key={
+                'template_name': template_name,
+                'edited_at_iso': edited_at_iso
+            }
+        )
+        
+        item = response.get('Item')
+        if not item:
+            raise HTTPException(status_code=404, detail="Template version not found")
+        
+        # Convert Decimal types
+        template = {
+            'template_name': item.get('template_name'),
+            'template_body': item.get('template_body', ''),
+            'edited_at_iso': _convert_decimal_to_native(item.get('edited_at_iso')),
+            'edited_by_sub': item.get('edited_by_sub', 'unknown'),
+            'edit_comment': item.get('edit_comment', '')
+        }
+        
+        logger.info(f"Retrieved template: {template_name} at {edited_at_iso}")
+        return template
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get template: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/prompts/template")
+async def update_template(
+    request: PromptTemplateUpdate,
+    current_user: User = Depends(require_admin)
+):
+    """Create/update a prompt template."""
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table('prompts_templates_tbl')
+        
+        # Get user info from Cognito token (already verified by require_admin)
+        edited_by_sub = current_user.email if hasattr(current_user, 'email') else 'admin'
+        
+        # Create new version with current timestamp
+        timestamp = int(time.time())
+        
+        item = {
+            'template_name': request.template_name,
+            'edited_at_iso': timestamp,
+            'edited_by_sub': edited_by_sub,
+            'template_body': request.template_body,
+            'edit_comment': request.edit_comment or ''
+        }
+        
+        # Put item into DynamoDB
+        table.put_item(Item=item)
+        
+        logger.info(f"Updated template: {request.template_name} by {edited_by_sub} at {timestamp}")
+        return {
+            "success": True,
+            "template_name": request.template_name,
+            "edited_at_iso": timestamp,
+            "edited_by_sub": edited_by_sub,
+            "message": f"Template '{request.template_name}' updated successfully"
+        }
+    except Exception as e:
+        logger.error(f"Failed to update template: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 

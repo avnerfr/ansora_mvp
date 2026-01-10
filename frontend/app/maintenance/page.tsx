@@ -7,7 +7,7 @@ import { Button } from '@/components/Button'
 import { isAdmin, isAuthenticated } from '@/lib/auth'
 import { maintenanceAPI } from '@/lib/api'
 
-type TabType = 'vectordb' | 'upsert' | 'modeltest'
+type TabType = 'vectordb' | 'upsert' | 'modeltest' | 'prompts'
 
 export default function MaintenancePage() {
   const router = useRouter()
@@ -56,6 +56,19 @@ export default function MaintenancePage() {
   const [placeholders, setPlaceholders] = useState<Array<{key: string, text: string, file?: File}>>([{key: '', text: ''}])
   const [processing, setProcessing] = useState(false)
   const [answer, setAnswer] = useState<string>('')
+
+  // Prompts state
+  const [templateNames, setTemplateNames] = useState<string[]>([])
+  const [selectedTemplateName, setSelectedTemplateName] = useState<string>('')
+  const [editors, setEditors] = useState<string[]>([])
+  const [selectedEditor, setSelectedEditor] = useState<string>('')
+  const [versions, setVersions] = useState<Array<{edited_at_iso: number, edited_by_sub: string, edit_comment: string}>>([])
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null)
+  const [templateBody, setTemplateBody] = useState<string>('')
+  const [editComment, setEditComment] = useState<string>('')
+  const [loadingTemplate, setLoadingTemplate] = useState(false)
+  const [updatingTemplate, setUpdatingTemplate] = useState(false)
+  const [promptMessage, setPromptMessage] = useState<string>('')
 
   useEffect(() => {
     if (!isAuthenticated()) {
@@ -296,6 +309,107 @@ export default function MaintenancePage() {
     }
   }
 
+  // Prompts handlers
+  const loadTemplateNames = async () => {
+    try {
+      const data = await maintenanceAPI.getTemplateNames()
+      setTemplateNames(data.template_names || [])
+      if (data.template_names?.length > 0) {
+        setSelectedTemplateName(data.template_names[0])
+      }
+    } catch (error) {
+      console.error('Failed to load template names:', error)
+    }
+  }
+
+  const loadEditors = async (templateName: string) => {
+    if (!templateName) return
+    try {
+      const data = await maintenanceAPI.getEditors(templateName)
+      setEditors(data.editors || [])
+      setSelectedEditor('')
+    } catch (error) {
+      console.error('Failed to load editors:', error)
+    }
+  }
+
+  const loadVersions = async (templateName: string, editedBy?: string) => {
+    if (!templateName) return
+    try {
+      const data = await maintenanceAPI.getTemplateVersions(templateName, editedBy)
+      setVersions(data.versions || [])
+      if (data.versions?.length > 0) {
+        setSelectedVersion(data.versions[0].edited_at_iso)
+      } else {
+        setSelectedVersion(null)
+      }
+    } catch (error) {
+      console.error('Failed to load versions:', error)
+    }
+  }
+
+  const loadTemplate = async (templateName: string, editedAtIso: number) => {
+    if (!templateName || !editedAtIso) return
+    setLoadingTemplate(true)
+    try {
+      const data = await maintenanceAPI.getTemplate(templateName, editedAtIso)
+      setTemplateBody(data.template_body || '')
+      setEditComment(data.edit_comment || '')
+    } catch (error: any) {
+      setPromptMessage(`✗ Error: ${error.response?.data?.detail || error.message || 'Failed to load template'}`)
+    } finally {
+      setLoadingTemplate(false)
+    }
+  }
+
+  const handleUpdateTemplate = async () => {
+    if (!selectedTemplateName || !templateBody) {
+      setPromptMessage('✗ Template name and body are required')
+      return
+    }
+    setUpdatingTemplate(true)
+    setPromptMessage('')
+    try {
+      await maintenanceAPI.updateTemplate(selectedTemplateName, templateBody, editComment)
+      setPromptMessage(`✓ Template '${selectedTemplateName}' updated successfully`)
+      // Reload versions and select the new one
+      await loadVersions(selectedTemplateName, selectedEditor || undefined)
+    } catch (error: any) {
+      setPromptMessage(`✗ Error: ${error.response?.data?.detail || error.message || 'Failed to update template'}`)
+    } finally {
+      setUpdatingTemplate(false)
+    }
+  }
+
+  // Load template names when switching to prompts tab
+  useEffect(() => {
+    if (activeTab === 'prompts' && templateNames.length === 0) {
+      loadTemplateNames()
+    }
+  }, [activeTab])
+
+  // Load editors when template name changes
+  useEffect(() => {
+    if (selectedTemplateName) {
+      loadEditors(selectedTemplateName)
+      loadVersions(selectedTemplateName)
+    }
+  }, [selectedTemplateName])
+
+  // Load versions when editor filter changes
+  useEffect(() => {
+    if (selectedTemplateName && selectedEditor) {
+      loadVersions(selectedTemplateName, selectedEditor)
+    }
+  }, [selectedEditor])
+
+  // Load template when version changes
+  useEffect(() => {
+    if (selectedTemplateName && selectedVersion) {
+      loadTemplate(selectedTemplateName, selectedVersion)
+    }
+  }, [selectedVersion])
+
   if (!authChecked) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -345,6 +459,16 @@ export default function MaintenancePage() {
               }`}
             >
               Model Test
+            </button>
+            <button
+              onClick={() => setActiveTab('prompts')}
+              className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'prompts'
+                  ? 'border-primary-500 text-primary-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Prompts
             </button>
           </nav>
         </div>
@@ -924,6 +1048,133 @@ export default function MaintenancePage() {
                       {answer}
                     </pre>
                   </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Prompts Tab */}
+        {activeTab === 'prompts' && (
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="space-y-6">
+              {/* Template Name Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Template Name
+                </label>
+                <select
+                  value={selectedTemplateName}
+                  onChange={(e) => {
+                    setSelectedTemplateName(e.target.value)
+                    setSelectedEditor('')
+                    setTemplateBody('')
+                    setEditComment('')
+                    setPromptMessage('')
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                >
+                  <option value="">Select a template</option>
+                  {templateNames.map((name) => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Editor Filter (optional) */}
+              {selectedTemplateName && editors.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Filter by Editor <span className="text-gray-500 text-xs font-normal">(optional)</span>
+                  </label>
+                  <select
+                    value={selectedEditor}
+                    onChange={(e) => setSelectedEditor(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="">All editors</option>
+                    {editors.map((editor) => (
+                      <option key={editor} value={editor}>{editor}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Version Selection */}
+              {selectedTemplateName && versions.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Version (Edited Date - newest first)
+                  </label>
+                  <select
+                    value={selectedVersion || ''}
+                    onChange={(e) => setSelectedVersion(parseInt(e.target.value))}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                  >
+                    <option value="">Select a version</option>
+                    {versions.map((version) => (
+                      <option key={version.edited_at_iso} value={version.edited_at_iso}>
+                        {new Date(version.edited_at_iso * 1000).toLocaleString()} - {version.edited_by_sub}
+                        {version.edit_comment && ` - ${version.edit_comment}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Edit Comment */}
+              {selectedTemplateName && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Edit Comment <span className="text-gray-500 text-xs font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editComment}
+                    onChange={(e) => setEditComment(e.target.value)}
+                    placeholder="Brief description of changes..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                  />
+                </div>
+              )}
+
+              {/* Template Body Editor */}
+              {selectedTemplateName && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Template Body
+                  </label>
+                  {loadingTemplate ? (
+                    <div className="text-sm text-gray-500">Loading template...</div>
+                  ) : (
+                    <textarea
+                      value={templateBody}
+                      onChange={(e) => setTemplateBody(e.target.value)}
+                      rows={20}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+                      placeholder="Template content will appear here..."
+                    />
+                  )}
+                </div>
+              )}
+
+              {/* Update Button */}
+              {selectedTemplateName && templateBody && (
+                <Button
+                  onClick={handleUpdateTemplate}
+                  variant="primary"
+                  isLoading={updatingTemplate}
+                >
+                  Update Template
+                </Button>
+              )}
+
+              {/* Message */}
+              {promptMessage && (
+                <div className={`p-4 rounded-md ${
+                  promptMessage.startsWith('✓') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+                }`}>
+                  {promptMessage}
                 </div>
               )}
             </div>

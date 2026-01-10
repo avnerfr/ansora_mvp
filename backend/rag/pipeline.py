@@ -4,6 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 from rag.vectorstore import vector_store
 from rag import s3_utils
+from rag.s3_utils import CompanyDetails
 from core.config import settings
 from typing import List, Dict, Any, Optional
 import logging
@@ -33,6 +34,7 @@ gmail_client_secret = os.getenv("GMAIL_CLIENT_SECRET")
 gmail_refresh_token = os.getenv("GMAIL_REFRESH_TOKEN")
 
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
+from .dynamodb_prompts import get_prompt_metadata_for_logging
 # Configure logging
 logger = logging.getLogger(__name__)
 # Don't configure logging here - main.py handles it to prevent duplicates
@@ -448,7 +450,7 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str, max_do
 async def build_retrieval_query(
     marketing_text: str,
     backgrounds: List[str],
-    company_analysis: str
+    company_details: Optional[CompanyDetails]
 ) -> str:
     """
     Build an optimized retrieval query using LLM for vector database search.
@@ -467,12 +469,20 @@ async def build_retrieval_query(
     marketing_text = marketing_text or ""
     backgrounds_str = backgrounds_str or ""
     
-    logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-
-    logger.info(f"Company analysis: {company_analysis}")
-    logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-
-    company_context = json.loads(company_analysis).get('company_context', {})
+    # Extract company context from CompanyDetails object
+    if company_details:
+        company_context = {
+            'company_name': company_details.company_context.company_name,
+            'company_domain': company_details.company_context.company_domain,
+            'self_described_positioning': company_details.company_context.self_described_positioning,
+            'product_surface_names': company_details.company_context.product_surface_names,
+            'typical_use_cases': company_details.company_context.typical_use_cases,
+            'known_competitors': company_details.company_context.known_competitors,
+            'target_audience': company_details.company_context.target_audience,
+            'operational_pains': company_details.company_context.operational_pains,
+        }
+    else:
+        company_context = {}
 
 
     company_value_proposition = ""# company_context.get('company_value_proposition', '')
@@ -774,8 +784,7 @@ def build_final_prompt(
     asset_type: str | None,
     icp: str | None,
     company_name: str | None,
-    company_analysis: str | None = None,
-    competition_analysis: str | None = None
+    company_details: Optional[CompanyDetails] = None
 ) -> str:
     """
     Build the final prompt by replacing template variables.
@@ -796,36 +805,43 @@ def build_final_prompt(
     # Expand structured rule blocks from asset type dictionaries
     asset_type_instructions = asset_type_rules.get(asset_type, asset_type or "") if asset_type else ""
     
-    # Process company analysis if provided
-    # Try to extract JSON from company_analysis if it's wrapped in code blocks
-    company_context = json.loads(company_analysis).get('company_context', {})
+    # Extract company context from CompanyDetails object
+    if company_details:
+        company_context = {
+            'company_name': company_details.company_context.company_name,
+            'company_domain': company_details.company_context.company_domain,
+            'self_described_positioning': company_details.company_context.self_described_positioning,
+            'product_surface_names': company_details.company_context.product_surface_names,
+            'typical_use_cases': company_details.company_context.typical_use_cases,
+            'known_competitors': company_details.company_context.known_competitors,
+            'target_audience': company_details.company_context.target_audience,
+            'operational_pains': company_details.company_context.operational_pains,
+        }
+    else:
+        company_context = {}
 
 
 
 
 
+    # Build company_info string from CompanyDetails for the template
     company_info = ""
     company_json = {}
-    if company_analysis:
-        try:
-            # Check if company_analysis contains JSON in code blocks
-            json_match = re.search(r'```json\s*(.*?)\s*```', company_analysis, re.DOTALL)
-            if json_match:
-                company_info = json_match.group(1).strip()
-                # Try to parse as JSON
-                try:
-                    company_json = json.loads(company_info)
-                except json.JSONDecodeError:
-                    # If JSON parsing fails, use the text as-is
-                    company_json = {'company_analysis': company_info}
-            else:
-                # If no JSON blocks, use the analysis as-is
-                company_info = company_analysis
-                company_json = {'company_analysis': company_analysis}
-        except Exception as e:
-            logger.warning(f"Error parsing company analysis: {e}, using as-is")
-            company_info = company_analysis or ""
-            company_json = {'company_analysis': company_info}
+    if company_details:
+        company_json = {
+            'company_context': {
+                'company_name': company_details.company_context.company_name,
+                'company_domain': company_details.company_context.company_domain,
+                'self_described_positioning': company_details.company_context.self_described_positioning,
+                'product_surface_names': company_details.company_context.product_surface_names,
+                'typical_use_cases': company_details.company_context.typical_use_cases,
+                'known_competitors': company_details.company_context.known_competitors,
+                'target_audience': company_details.company_context.target_audience,
+                'operational_pains': company_details.company_context.operational_pains,
+            },
+            'usage_rules': company_details.company_context.usage_rules
+        }
+        company_info = json.dumps(company_json, indent=2)
     
 
     # Use icp value for both target_audience and icp for backward compatibility
@@ -844,10 +860,10 @@ def build_final_prompt(
         target_audience=icp_value,  # New format
         icp=icp_value,  # Old format for backward compatibility
         company_analysis=company_info,
-        latest_anouncements=company_json.get('latest_anouncements'),
+        latest_anouncements=company_json.get('company_context', {}).get('latest_anouncements', ''),
         company_name=company_name,
-        competition_analysis = competition_analysis,
-        company_domain=company_json.get('company_domain') or company_json.get('website'),
+        competition_analysis='',  # No longer used
+        company_domain=company_json.get('company_context', {}).get('company_domain', ''),
         company_value_proposition=company_json.get('company_value_proposition'),
     )
 
@@ -926,18 +942,18 @@ def get_company_enumerations(company_name: str) -> List[str]:
     return json.loads(response['Body'].read().decode('utf-8'))
 
 
-def get_collection_name(company_analysis: str) -> str:
-    """Get collection name from company file."""
+def get_collection_name(company_details: Optional[CompanyDetails]) -> str:
+    """Get collection name from CompanyDetails object, resolving all possible variations."""
             
-    # Check if collection exists
-    #collections = self.client.get_collections().collections
-    #collection_names = [c.name for c in collections]
+    if not company_details:
+        logger.error("Company details is empty")
+        return None
 
     try:
-        company_context = json.loads(company_analysis).get('company_context', {})
-        company_domain = company_context.get('company_domain', '')
-        collection_name = company_domain + "-summaries_1_0"
-        logger.info(f"Collection Name: {collection_name}")
+        company_domain = company_details.company_context.company_domain
+        # Use the vectorstore's resolve_collection_name to try all variations
+        collection_name = vector_store.resolve_collection_name(company_domain, "summaries_1_0")
+        logger.info(f"✓ Resolved collection name: {collection_name} for domain: {company_domain}")
         return collection_name
     except Exception as e:
         logger.error(f"Error getting collection name: {e}")
@@ -957,8 +973,7 @@ async def process_rag(
     icp: str | None = None,
     template: str | None = None,
     company_name: str | None = None,
-    company_analysis: str | None = None,
-    competition_analysis: str | None = None,
+    company_details: Optional[CompanyDetails] = None,
     is_administrator: bool = False,
     request_id: str | None = None,
 ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str, str]:
@@ -998,15 +1013,19 @@ async def process_rag(
         logger.info(f"Asset Type: {asset_type}")
         logger.info(f"Company Name: {company_name}")
     #    logger.info(f"Company Domain: {json.dumps(company_analysis, indent=4).get('company_domain')}")
-     
+        
+        # Log prompt template metadata
+        prompt_metadata = get_prompt_metadata_for_logging()
+        logger.info(f"Prompt Templates:")
+        logger.info(f"  - Retrieval Prompt: edited by {prompt_metadata.get('retrieval_prompt_edited_by')} at {prompt_metadata.get('retrieval_prompt_edited_at')}")
+        logger.info(f"  - System Prompt: edited by {prompt_metadata.get('system_prompt_edited_by')} at {prompt_metadata.get('system_prompt_edited_at')}")
 
 
         company_enumerations = get_company_enumerations(company_name)
-        company_file = s3_utils.get_latest_company_file(company_name)
-        collection_name = get_collection_name(company_analysis)
+        collection_name = get_collection_name(company_details)
 
         # Step 1: Build optimized retrieval query
-        retrieval_query, retrieval_prompt = await build_retrieval_query(marketing_text, backgrounds, company_analysis)
+        retrieval_query, retrieval_prompt = await build_retrieval_query(marketing_text, backgrounds, company_details)
 
 
         # Step 2: Retrieve documents from vector DB
@@ -1027,9 +1046,7 @@ async def process_rag(
             asset_type=asset_type,
             icp=icp,
             company_name=company_name,
-            company_analysis=company_analysis,
-            competition_analysis=competition_analysis,
-
+            company_details=company_details
         )
 
         # Step 5: Generate LLM response
@@ -1069,7 +1086,7 @@ async def process_rag(
         email_content = ""
         try:
             email_sent, email_content = send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                                   company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                                                   company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context, 
                                                    prompt, refined_text, sources, retrieved_docs, send=is_administrator)
             if is_administrator:
                 if email_sent:
@@ -1081,7 +1098,7 @@ async def process_rag(
             # Still build email content even if sending fails
             try:
                 email_content = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                                    company_name, company_analysis,  retrieval_query, retrieval_prompt, vector_search_context,
+                                                    company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context,
                                                     prompt, refined_text, sources, retrieved_docs)
             except Exception as e2:
                 logger.error(f"Failed to build email content: {e2}", exc_info=True)
@@ -1126,7 +1143,7 @@ def get_gmail_service():
 
 
 def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template, 
-                        company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                        company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context, 
                         prompt, refined_text, sources, retrieved_docs):
     """Build email content string. Returns the email body as a string."""
     # Build email content
@@ -1136,39 +1153,45 @@ def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, t
     email_body += f"\nTarget Audience: {icp}"        
     email_body += f"\nPain Points : {backgrounds}"
     email_body += f"\nCompany Name: {company_name}"
+    
+    # Add prompt template metadata
+    prompt_metadata = get_prompt_metadata_for_logging()
+    email_body += f"\n\n------------------------------------------------\n"
+    email_body += f"Prompt Templates Used:"
+    email_body += f"\n  - Retrieval Prompt: edited by {prompt_metadata.get('retrieval_prompt_edited_by')} at {prompt_metadata.get('retrieval_prompt_edited_at')}"
+    email_body += f"\n  - System Prompt: edited by {prompt_metadata.get('system_prompt_edited_by')} at {prompt_metadata.get('system_prompt_edited_at')}"
     email_body += f"\n\n------------------------------------------------\n"
     
 
-    company_context = json.loads(company_analysis).get('company_context', {})
-    company_value_proposition = company_context.get('company_value_proposition', '')
-    company_domain = company_context.get('company_domain', '')
-    company_competitors = company_context.get('known_competitors', [])
-    company_latest_anouncements = company_context.get('latest_anouncements', [])
-    company_operational_pains = company_context.get('operational_pains', [])
-    company_target_audience = company_context.get('target_audience', [])
+    # Extract company details from CompanyDetails object
+    if company_details:
+        company_domain = company_details.company_context.company_domain
+        company_competitors = company_details.company_context.known_competitors
+        company_operational_pains = company_details.company_context.operational_pains
+        company_target_audience = company_details.company_context.target_audience
+        company_value_proposition = company_details.company_context.self_described_positioning
 
-    email_body += f"\nCompany Value Proposition: {company_value_proposition}"
-    email_body += f"\nCompany Domain: {company_domain}"
-    email_body += f"\nCompany Competitors: {company_competitors}"
-    email_body += f"\nCompany Latest Anouncements: {company_latest_anouncements}"
-    email_body += f"\nCompany Operational Pains: {company_operational_pains}"
-    email_body += f"\nCompany Target Audience: {company_target_audience}"
-
-
-
-    # Handle company_analysis - extract JSON if present, otherwise use raw text
-    if company_analysis:
-        try:
-            match = re.search(r'```json(.*)```', company_analysis, re.DOTALL)
-            if match:
-                json_str = match.group(1)
-                json_data = json.loads(json_str)
-                email_body += f"\nCompany Analysis:\n{json.dumps(json_data, indent=4)}"
-            else:
-                email_body += f"\nCompany Analysis:\n{company_analysis}"
-        except (AttributeError, json.JSONDecodeError) as e:
-            logger.warning(f"Could not parse company_analysis as JSON: {e}, using raw text")
-            email_body += f"\nCompany Analysis:\n{company_analysis}"
+        email_body += f"\nCompany Value Proposition: {company_value_proposition}"
+        email_body += f"\nCompany Domain: {company_domain}"
+        email_body += f"\nCompany Competitors: {company_competitors}"
+        email_body += f"\nCompany Operational Pains: {company_operational_pains}"
+        email_body += f"\nCompany Target Audience: {company_target_audience}"
+        
+        # Add full company details
+        company_json = {
+            'company_context': {
+                'company_name': company_details.company_context.company_name,
+                'company_domain': company_details.company_context.company_domain,
+                'self_described_positioning': company_details.company_context.self_described_positioning,
+                'product_surface_names': company_details.company_context.product_surface_names,
+                'typical_use_cases': company_details.company_context.typical_use_cases,
+                'known_competitors': company_details.company_context.known_competitors,
+                'target_audience': company_details.company_context.target_audience,
+                'operational_pains': company_details.company_context.operational_pains,
+            },
+            'usage_rules': company_details.company_context.usage_rules
+        }
+        email_body += f"\nCompany Analysis:\n{json.dumps(company_json, indent=4)}"
     else:
         email_body += f"\nCompany Analysis: Not available"
     
@@ -1188,7 +1211,7 @@ def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, t
 
 
 def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template, 
-                company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context, 
+                company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context, 
                 prompt, refined_text, sources, retrieved_docs, send: bool = True):
     """Send email notification using Gmail API. Returns (success: bool, email_content: str)."""
     logger.info(f"Attempting to send email notification via Gmail API...")
@@ -1197,7 +1220,7 @@ def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
     
     # Build email content
     email_body = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                     company_name, company_analysis, retrieval_query, retrieval_prompt, vector_search_context,
+                                     company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context,
                                      prompt, refined_text, sources, retrieved_docs)
     
     # If not sending, just return the content

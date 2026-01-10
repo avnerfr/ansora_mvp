@@ -1,7 +1,13 @@
 # RAG Pipeline Prompts and Templates
 # This file contains all the prompts and templates used by the RAG pipeline
 
-SYSTEM_PROMPT = f"""
+import logging
+from .dynamodb_prompts import get_asset_creation_rag_build_template, get_asset_creation_template
+
+logger = logging.getLogger(__name__)
+
+# Default fallback prompts (used if DynamoDB retrieval fails)
+_DEFAULT_SYSTEM_PROMPT = f"""
 You are a senior enterprise B2B Product Marketing Writer for Network & Security Operations teams.
 
 DYNAMIC ROLE ADAPTATION:
@@ -117,7 +123,7 @@ Avoid generic security or marketing buzzwords.
 """
 
 
-VECTOR_DB_RETREIVAL_PROMPT = """
+_DEFAULT_VECTOR_DB_RETREIVAL_PROMPT = """
 You are a retrieval query condenser for a RAG system.
 Your task is to translate the user’s inputs into 3-5 concrete, retrieval-optimized sentences that reflect how the concept appears in real operational security contexts.
 
@@ -177,3 +183,43 @@ Provide the following asset: {{asset_type}} using the following structure and fo
 {{asset_type_rules[asset_type]}}
 
 """
+
+
+# Load prompts from DynamoDB, with fallback to defaults
+def _load_prompts():
+    """Load prompts from DynamoDB with fallbacks to default values."""
+    global SYSTEM_PROMPT, VECTOR_DB_RETREIVAL_PROMPT
+    
+    # Try to load from DynamoDB
+    try:
+        # asset_creation_template -> SYSTEM_PROMPT (used in DEFAULT_TEMPLATE)
+        system_prompt_body = get_asset_creation_template()
+        if system_prompt_body:
+            SYSTEM_PROMPT = system_prompt_body
+            logger.info("✓ Loaded SYSTEM_PROMPT from DynamoDB (asset_creation_template)")
+        else:
+            SYSTEM_PROMPT = _DEFAULT_SYSTEM_PROMPT
+            logger.warning("⚠ Using fallback SYSTEM_PROMPT (DynamoDB returned None)")
+    except Exception as e:
+        logger.error(f"✗ Error loading SYSTEM_PROMPT from DynamoDB: {e}")
+        SYSTEM_PROMPT = _DEFAULT_SYSTEM_PROMPT
+        logger.warning("⚠ Using fallback SYSTEM_PROMPT due to error")
+    
+    try:
+        # asset_creation_rag_build_template -> VECTOR_DB_RETREIVAL_PROMPT
+        retrieval_prompt_body = get_asset_creation_rag_build_template()
+        if retrieval_prompt_body:
+            VECTOR_DB_RETREIVAL_PROMPT = retrieval_prompt_body
+            logger.info("✓ Loaded VECTOR_DB_RETREIVAL_PROMPT from DynamoDB (asset_creation_rag_build_template)")
+        else:
+            VECTOR_DB_RETREIVAL_PROMPT = _DEFAULT_VECTOR_DB_RETREIVAL_PROMPT
+            logger.warning("⚠ Using fallback VECTOR_DB_RETREIVAL_PROMPT (DynamoDB returned None)")
+    except Exception as e:
+        logger.error(f"✗ Error loading VECTOR_DB_RETREIVAL_PROMPT from DynamoDB: {e}")
+        VECTOR_DB_RETREIVAL_PROMPT = _DEFAULT_VECTOR_DB_RETREIVAL_PROMPT
+        logger.warning("⚠ Using fallback VECTOR_DB_RETREIVAL_PROMPT due to error")
+
+
+# Initialize prompts on module import
+_load_prompts()
+
