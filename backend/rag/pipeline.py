@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import base64
+from decimal import Decimal
 #from google.auth.transport.requests import Request
 #from google.oauth2.credentials import Credentials
 #from googleapiclient.discovery import build
@@ -34,13 +35,14 @@ gmail_client_secret = os.getenv("GMAIL_CLIENT_SECRET")
 gmail_refresh_token = os.getenv("GMAIL_REFRESH_TOKEN")
 
 from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
-from .dynamodb_prompts import get_prompt_metadata_for_logging
+from .dynamodb_prompts import get_prompt_metadata_for_logging, AWS_REGION
 # Configure logging
 logger = logging.getLogger(__name__)
 # Don't configure logging here - main.py handles it to prevent duplicates
 
 
-asset_type_rules = {
+# Fallback asset type rules (used if DynamoDB unavailable)
+_DEFAULT_ASSET_TYPE_RULES = {
 "email": """
 Theme
 Name the recurring operational struggle, not the category.
@@ -188,6 +190,94 @@ STRUCTURE:
 1 sentence on why the current state is unsustainable based on the pain_phrases.
 """,
 }
+
+
+def _load_asset_type_rules_from_dynamodb() -> dict[str, str]:
+    """
+    Load asset type rules from DynamoDB.
+    Templates starting with 'asset_template_' are loaded as asset type rules.
+    The asset type name is extracted from template_name by removing 'asset_template_' prefix.
+    
+    Returns:
+        Dictionary mapping asset type to rule body
+    """
+    try:
+        dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+        table = dynamodb.Table('prompts_templates_tbl')
+        
+        # Scan for all items starting with 'asset_template_'
+        response = table.scan(
+            FilterExpression='begins_with(template_name, :prefix)',
+            ExpressionAttributeValues={':prefix': 'asset_template_'}
+        )
+        
+        items = response.get('Items', [])
+        
+        # Handle pagination
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(
+                FilterExpression='begins_with(template_name, :prefix)',
+                ExpressionAttributeValues={':prefix': 'asset_template_'},
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response.get('Items', []))
+        
+        # Group by template_name and get the latest version (highest edited_at_iso)
+        templates_by_name = {}
+        for item in items:
+            template_name = item.get('template_name')
+            edited_at_iso = item.get('edited_at_iso', 0)
+            
+            # Convert Decimal to int for comparison
+            if isinstance(edited_at_iso, Decimal):
+                edited_at_iso = int(edited_at_iso)
+            
+            if template_name not in templates_by_name or edited_at_iso > templates_by_name[template_name].get('edited_at_iso', 0):
+                templates_by_name[template_name] = item
+        
+        # Build asset_type_rules dictionary
+        asset_rules = {}
+        for template_name, item in templates_by_name.items():
+            # Extract asset type name: 'asset_template_one-pager' -> 'one-pager'
+            asset_type = template_name.replace('asset_template_', '')
+            template_body = item.get('template_body', '')
+            
+            if template_body:
+                asset_rules[asset_type] = template_body
+                logger.info(f"Loaded asset type rule '{asset_type}' from DynamoDB (edited_at: {item.get('edited_at_iso')})")
+        
+        logger.info(f"✓ Loaded {len(asset_rules)} asset type rules from DynamoDB")
+        return asset_rules
+        
+    except Exception as e:
+        logger.error(f"✗ Error loading asset type rules from DynamoDB: {e}")
+        return {}
+
+
+def _get_asset_type_rules() -> dict[str, str]:
+    """
+    Get asset type rules, merging DynamoDB rules with fallback defaults.
+    DynamoDB rules take precedence over defaults.
+    
+    Returns:
+        Dictionary mapping asset type to rule body
+    """
+    # Start with defaults
+    rules = _DEFAULT_ASSET_TYPE_RULES.copy()
+    
+    # Load from DynamoDB and override/add
+    dynamodb_rules = _load_asset_type_rules_from_dynamodb()
+    if dynamodb_rules:
+        rules.update(dynamodb_rules)
+        logger.info(f"Using {len(dynamodb_rules)} asset type rules from DynamoDB, {len(_DEFAULT_ASSET_TYPE_RULES)} from defaults")
+    else:
+        logger.warning("⚠ Using fallback asset type rules (DynamoDB unavailable or returned no rules)")
+    
+    return rules
+
+
+# Load asset type rules (combines DynamoDB and defaults)
+asset_type_rules = _get_asset_type_rules()
 
 
 
@@ -802,8 +892,21 @@ def build_final_prompt(
     """
     logger.info("===================== Step 4. Building final prompt =========================")
 
-    # Expand structured rule blocks from asset type dictionaries
-    asset_type_instructions = asset_type_rules.get(asset_type, asset_type or "") if asset_type else ""
+    # Get asset type rules (reload if asset type not found)
+    global asset_type_rules
+    asset_type_instructions = ""
+    
+    if asset_type:
+        asset_type_instructions = asset_type_rules.get(asset_type, "")
+        
+        # If asset type not found, try reloading from DynamoDB (in case new ones were added)
+        if not asset_type_instructions:
+            logger.info(f"Asset type '{asset_type}' not found, reloading rules from DynamoDB...")
+            asset_type_rules = _get_asset_type_rules()
+            asset_type_instructions = asset_type_rules.get(asset_type, asset_type)
+            
+            if asset_type_instructions == asset_type:
+                logger.warning(f"⚠ Asset type '{asset_type}' still not found after reload, using asset type name as fallback")
     
     # Extract company context from CompanyDetails object
     if company_details:
