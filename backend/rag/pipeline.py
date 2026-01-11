@@ -826,6 +826,39 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
     logger.debug(f"{combined_docs}")
     logger.debug("=================================================================================")
 
+    # Deduplicate documents by title before reranking
+    logger.info("Deduplicating documents by title...")
+    seen_titles = {}
+    deduplicated_docs = []
+    
+    for doc in combined_docs:
+        # Get title from metadata
+        metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+        title = metadata.get('title', '')
+        
+        # If no title, use content hash as fallback
+        if not title:
+            content = doc.page_content if hasattr(doc, 'page_content') else ''
+            title = f"_content_hash_{hash(content)}"
+        
+        # Keep document with highest score if duplicate title found
+        if title not in seen_titles:
+            seen_titles[title] = doc
+            deduplicated_docs.append(doc)
+        else:
+            # Compare scores and keep the one with higher score
+            existing_score = seen_titles[title].metadata.get('score', 0) if hasattr(seen_titles[title], 'metadata') else 0
+            current_score = metadata.get('score', 0)
+            
+            if current_score > existing_score:
+                # Replace with higher-scored document
+                deduplicated_docs.remove(seen_titles[title])
+                seen_titles[title] = doc
+                deduplicated_docs.append(doc)
+    
+    logger.info(f"✓ Deduplicated: {len(combined_docs)} → {len(deduplicated_docs)} documents ({len(combined_docs) - len(deduplicated_docs)} duplicates removed)")
+    combined_docs = deduplicated_docs
+
     return external_docs, combined_docs
 
 
@@ -968,11 +1001,16 @@ async def rerank_and_filter_documents(
                         return retrieved_docs, rerank_prompt, filtered_result
             elif isinstance(filtered_data, dict):
                 # If it's a dict with a key containing a list of documents/insights
+                logger.info("DEBUG: Checking for nested list in dict...")
                 docs_list = (filtered_data.get('documents') or 
                             filtered_data.get('filtered_results') or 
                             filtered_data.get('results') or
+                            filtered_data.get('re_ranked_results') or  # Add support for re_ranked_results
+                            filtered_data.get('reranked_results') or   # Also support without underscore
                             filtered_data.get('insights') or
                             filtered_data.get('selected_insights'))
+                
+                logger.info(f"DEBUG: docs_list found: {docs_list is not None}, is list: {isinstance(docs_list, list) if docs_list else False}")
                 
                 if docs_list and isinstance(docs_list, list):
                     # Extract IDs from the nested list
@@ -1137,6 +1175,12 @@ async def rerank_and_filter_battle_cards(
             # Try to parse as JSON
             filtered_data = json.loads(filtered_result)
             
+            logger.info(f"DEBUG: Parsed JSON type: {type(filtered_data).__name__}")
+            if isinstance(filtered_data, dict):
+                logger.info(f"DEBUG: Dict keys: {list(filtered_data.keys())}")
+            elif isinstance(filtered_data, list):
+                logger.info(f"DEBUG: List length: {len(filtered_data)}, first item type: {type(filtered_data[0]).__name__ if filtered_data else 'empty'}")
+            
             # Handle different response formats
             if isinstance(filtered_data, list):
                 # If it's a list of IDs (numbers)
@@ -1170,11 +1214,16 @@ async def rerank_and_filter_battle_cards(
                         return retrieved_docs, rerank_prompt, filtered_result
             elif isinstance(filtered_data, dict):
                 # If it's a dict with a key containing a list of documents/insights
+                logger.info("DEBUG: Checking for nested list in dict...")
                 docs_list = (filtered_data.get('documents') or 
                             filtered_data.get('filtered_results') or 
                             filtered_data.get('results') or
+                            filtered_data.get('re_ranked_results') or  # Add support for re_ranked_results
+                            filtered_data.get('reranked_results') or   # Also support without underscore
                             filtered_data.get('insights') or
                             filtered_data.get('selected_insights'))
+                
+                logger.info(f"DEBUG: docs_list found: {docs_list is not None}, is list: {isinstance(docs_list, list) if docs_list else False}")
                 
                 if docs_list and isinstance(docs_list, list):
                     # Extract IDs from the nested list

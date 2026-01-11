@@ -705,7 +705,7 @@ async def process_battle_cards(
                 # The strict company_enumerations filters are too restrictive for competitive intel
                 results = vector_store.search_reddit_posts_minimal_filter(
                     query=query,
-                    k=5,  # Get top 5 results per query
+                    k=10,  # Get top 10 results per query
                     collection_name=collection_name,
                     doc_type='reddit_post'
                 )
@@ -716,7 +716,7 @@ async def process_battle_cards(
                 logger.info(f"  Using standard search (no minimal_filter method)")
                 results = vector_store.search_reddit_posts(
                     query=query,
-                    k=5,
+                    k=10,
                     company_enumerations=company_enumerations,
                     collection_name=collection_name,
                     company_name=company_name
@@ -727,6 +727,39 @@ async def process_battle_cards(
                 logger.warning(f"  Error searching Qdrant: {e}")
         
         logger.info(f"✓ Retrieved total of {len(all_retrieved_docs)} documents from Qdrant")
+        
+        # Step 2.3: Deduplicate documents by title before reranking
+        logger.info("Step 2.3: Deduplicating documents by title...")
+        seen_titles = {}
+        deduplicated_docs = []
+        
+        for doc in all_retrieved_docs:
+            # Get title from metadata
+            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+            title = metadata.get('title', '')
+            
+            # If no title, use content hash as fallback
+            if not title:
+                content = doc.page_content if hasattr(doc, 'page_content') else ''
+                title = f"_content_hash_{hash(content)}"
+            
+            # Keep document with highest score if duplicate title found
+            if title not in seen_titles:
+                seen_titles[title] = doc
+                deduplicated_docs.append(doc)
+            else:
+                # Compare scores and keep the one with higher score
+                existing_score = seen_titles[title].metadata.get('score', 0) if hasattr(seen_titles[title], 'metadata') else 0
+                current_score = metadata.get('score', 0)
+                
+                if current_score > existing_score:
+                    # Replace with higher-scored document
+                    deduplicated_docs.remove(seen_titles[title])
+                    seen_titles[title] = doc
+                    deduplicated_docs.append(doc)
+        
+        logger.info(f"✓ Deduplicated: {len(all_retrieved_docs)} → {len(deduplicated_docs)} documents ({len(all_retrieved_docs) - len(deduplicated_docs)} duplicates removed)")
+        all_retrieved_docs = deduplicated_docs
         
         # Step 2.4: Clean documents to reduce token usage before reranking
         logger.info("Step 2.4: Cleaning documents for reranking...")
