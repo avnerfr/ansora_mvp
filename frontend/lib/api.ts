@@ -133,6 +133,30 @@ export const ragAPI = {
     const response = await apiClient.get(`/rag/company-data/${companyName}`)
     return response.data
   },
+  getAssetTypes: async () => {
+    const response = await apiClient.get('/rag/asset-types')
+    return response.data
+  },
+  getCompetitors: async (companyName: string) => {
+    const response = await apiClient.get(`/rag/competitors/${companyName}`)
+    return response.data
+  },
+  processBattleCards: async (
+    competitor: string,
+    marketingText: string,
+    options?: {
+      icp?: string
+      company?: string
+    }
+  ) => {
+    const response = await apiClient.post('/rag/process-battle-cards', {
+      backgrounds: [competitor],  // Competitor goes in backgrounds
+      marketing_text: marketingText,
+      icp: options?.icp,
+      company: options?.company,
+    })
+    return response.data
+  },
 }
 
 // Maintenance API (Admin only)

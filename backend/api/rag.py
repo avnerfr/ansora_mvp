@@ -16,10 +16,11 @@ from models import (
     RAGResultResponse, SourceItem, PromptTemplateRequest, PromptTemplateResponse
 )
 from core.auth import get_current_user, get_cognito_groups_from_token
-from rag.pipeline import process_rag, DEFAULT_TEMPLATE
+from rag.pipeline import process_rag, DEFAULT_TEMPLATE, _load_asset_type_rules_from_dynamodb
 from rag.loader import load_document
 from rag.agents import company_analysis_agent
 from rag.s3_utils import get_latest_company_file, save_company_file, get_company_website
+from rag.dynamodb_prompts import get_latest_prompt_template
 import re
 from core.config import settings
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -448,3 +449,434 @@ async def get_company_data(
             ]
         }
             
+
+@router.get("/asset-types")
+async def get_asset_types(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get available asset types from DynamoDB.
+    Loads all templates starting with 'asset_template_' and returns the asset type names.
+    
+    Returns:
+        Dict with asset_types array
+    """
+    try:
+        # Load asset type rules from DynamoDB
+        asset_rules = _load_asset_type_rules_from_dynamodb()
+        
+        # Get the asset type names (keys from the dictionary)
+        asset_types = sorted(list(asset_rules.keys()))
+        
+        logger.info(f"✓ Returning {len(asset_types)} asset types from DynamoDB")
+        
+        return {
+            "asset_types": asset_types
+        }
+    except Exception as e:
+        logger.error(f"Error getting asset types: {e}", exc_info=True)
+        # Return fallback asset types
+        return {
+            "asset_types": [
+                "email",
+                "one-pager",
+                "landing-page",
+                "blog",
+                "blog-post",
+                "linkedin-post"
+            ]
+        }
+
+
+@router.get("/competitors/{company_name}")
+async def get_competitors(
+    company_name: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get competitors for a company from CompanyDetails in S3.
+    
+    Args:
+        company_name: Company name
+        
+    Returns:
+        Dict with competitors array
+    """
+    try:
+        # Get company details from S3
+        company_details = get_latest_company_file(company_name)
+        
+        if not company_details:
+            logger.warning(f"No company information found for {company_name}")
+            return {"competitors": []}
+        
+        # Extract competitors from CompanyDetails
+        competitors = company_details.company_context.known_competitors
+        
+        logger.info(f"✓ Returning {len(competitors)} competitors for {company_name}")
+        
+        return {
+            "competitors": competitors
+        }
+    except Exception as e:
+        logger.error(f"Error getting competitors for {company_name}: {e}", exc_info=True)
+        return {"competitors": []}
+
+
+@router.post("/process-battle-cards", response_model=RAGProcessResponse)
+async def process_battle_cards(
+    request: RAGProcessRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Process battle cards through specialized pipeline.
+    
+    Uses:
+    1. 'battle_cards_rag_build_template' for RAG build
+    2. 'asset_template_battle-cards' for asset generation
+    """
+    import uuid as uuid_lib
+    request_id = str(uuid_lib.uuid4())[:8]
+    logger.info(f"[Request {request_id}] POST /api/v1/rag/process-battle-cards - User: {current_user.email} (ID: {current_user.id})")
+    
+    # Validate that we have a competitor selected (stored in backgrounds)
+    if not request.backgrounds or not request.backgrounds[0]:
+        logger.warning("Validation error: No competitor provided for battle cards")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Competitor must be selected for battle cards"
+        )
+    
+    competitor = request.backgrounds[0]  # First item is the competitor
+    
+    # Check if user is administrator
+    token = credentials.credentials
+    groups = get_cognito_groups_from_token(token)
+    is_administrator = 'Administrators' in groups
+    logger.info(f"User is administrator: {is_administrator}")
+    
+    # Determine company name
+    company_name = None
+    if request.company:
+        company_name = request.company
+        logger.info(f"Using company from request (admin): {company_name}")
+    else:
+        company_groups = [g for g in groups if g != 'Administrators']
+        if company_groups:
+            company_name = company_groups[0]
+            logger.info(f"Using company from Cognito groups: {company_name}")
+    
+    # Get company details
+    company_details = None
+    if company_name:
+        company_details = get_latest_company_file(company_name)
+        if not company_details:
+            logger.info(f"Generating new company information for {company_name}")
+            company_website = get_company_website(company_name)
+            try:
+                company_analysis = company_analysis_agent(company_name, company_website)
+                save_company_file(company_name, company_analysis)
+                company_details = get_latest_company_file(company_name)
+            except Exception as e:
+                logger.error(f"Error generating company information: {e}")
+    
+    logger.info(f"Battle Cards Request - Competitor: {competitor}, Company: {company_name}")
+    
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+        
+        # Step 1: Get the RAG build template from DynamoDB
+        rag_build_template_data = get_latest_prompt_template('battle_cards_rag_build_template')
+        if not rag_build_template_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Battle cards RAG build template not found in DynamoDB"
+            )
+        
+        rag_build_template = rag_build_template_data['template_body']
+        logger.info(f"✓ Loaded battle_cards_rag_build_template from DynamoDB")
+        
+        # Step 2: Build the prompt for RAG build using the template
+        # Replace placeholders in the template
+        company_context = {}
+        if company_details:
+            company_context = {
+                'company_name': company_details.company_context.company_name,
+                'company_domain': company_details.company_context.company_domain,
+                'self_described_positioning': company_details.company_context.self_described_positioning,
+                'product_surface_names': company_details.company_context.product_surface_names,
+                'typical_use_cases': company_details.company_context.typical_use_cases,
+                'known_competitors': company_details.company_context.known_competitors,
+                'target_audience': company_details.company_context.target_audience,
+                'operational_pains': company_details.company_context.operational_pains,
+            }
+        
+        # Prepare template variables
+        # Note: icp is the user-selected target_audience from the dropdown
+        # target_audience is the full list from company details (for reference)
+        template_vars = {
+            'competitor': competitor,
+            'company_name': company_name or '',
+            'company_domain': company_context.get('company_domain', ''),
+            'self_described_positioning': company_context.get('self_described_positioning', ''),
+            'target_audience': request.icp or '',  # User-selected target audience from dropdown
+            'icp': request.icp or '',  # Same as target_audience (for backward compatibility)
+            'user_provided_text': request.marketing_text or '',
+        }
+        
+        logger.info(f"Battle Cards RAG Build - Template Variables:")
+        logger.info(f"  Competitor: {competitor}")
+        logger.info(f"  Company: {company_name}")
+        logger.info(f"  Target Audience (from dropdown): {request.icp}")
+        logger.info(f"  User Context: {len(request.marketing_text or '')} chars")
+        
+        rag_build_prompt = rag_build_template.format(**template_vars)
+        
+        # Step 3: Run the model with RAG build prompt
+        logger.info("Running RAG build model for battle cards...")
+        llm = ChatOpenAI(
+            model_name="deepseek-ai/DeepSeek-V3.2",
+            openai_api_key=settings.DEEPINFRA_API_KEY,
+            base_url=settings.DEEPINFRA_API_BASE_URL,
+            temperature=1.0,
+        )
+        
+        rag_build_messages = [HumanMessage(content=rag_build_prompt)]
+        rag_build_response = await llm.ainvoke(rag_build_messages)
+        rag_build_result = rag_build_response.content
+        
+        logger.info(f"✓ RAG build completed: {len(rag_build_result)} chars")
+        logger.info(f"RAG build result (search queries): {rag_build_result}")
+        
+        # Step 2: Use the RAG build result as search queries for Qdrant
+        logger.info("Step 2: Retrieving buyer language insights from Qdrant...")
+        
+        from rag.vectorstore import vector_store
+        import json
+        
+        # Parse the RAG build result - it should contain search queries
+        # Split by newlines and clean up
+        search_queries = [q.strip() for q in rag_build_result.split('\n') if q.strip() and not q.strip().startswith('#')]
+        logger.info(f"Extracted {len(search_queries)} search queries from RAG build")
+        
+        # Determine collection name using the vectorstore's resolve method
+        collection_name = "cybersecurity-summaries_1_0"  # Default
+        if company_details:
+            try:
+                company_domain = company_details.company_context.company_domain
+                collection_name = vector_store.resolve_collection_name(company_domain, "summaries_1_0")
+                logger.info(f"✓ Resolved collection name: {collection_name} for domain: {company_domain}")
+            except Exception as e:
+                logger.warning(f"Could not resolve collection name, using default: {e}")
+        
+        logger.info(f"Using Qdrant collection: {collection_name}")
+        
+        # Get company enumerations for better filtering
+        # Note: Despite the type hint being List[str], the vectorstore code expects a dict
+        company_enumerations = {}
+        if company_name:
+            try:
+                import boto3
+                s3 = boto3.client('s3')
+                key = company_name.lower() + '_enumerations.json'
+                logger.info(f"Reading company enumerations from S3: {key}")
+                response = s3.get_object(Bucket='ansora-company-enumerations', Key=key)
+                company_enumerations = json.loads(response['Body'].read().decode('utf-8'))
+                logger.info(f"✓ Loaded company enumerations: {list(company_enumerations.keys())}")
+            except Exception as e:
+                logger.warning(f"Could not load company enumerations: {e}")
+                company_enumerations = {
+                    "domain": [company_name] if company_name else [],
+                    "operational_surface": [],
+                    "execution_surface": [],
+                    "failure_type": []
+                }
+        
+        # Search Qdrant for each query
+        all_retrieved_docs = []
+        
+        for i, query in enumerate(search_queries[:10]):  # Limit to first 10 queries
+            logger.info(f"Query {i+1}/{min(len(search_queries), 10)}: {query[:100]}...")
+            try:
+                results = vector_store.search_reddit_posts(
+                    query=query,
+                    k=5,  # Get top 5 results per query
+                    company_enumerations=company_enumerations,
+                    collection_name=collection_name,
+                    company_name=company_name
+                )
+                all_retrieved_docs.extend(results)
+                logger.info(f"  Retrieved {len(results)} documents")
+            except Exception as e:
+                logger.warning(f"  Error searching Qdrant: {e}")
+        
+        logger.info(f"✓ Retrieved total of {len(all_retrieved_docs)} documents from Qdrant")
+        
+        # Step 3: Organize results as JSON
+        logger.info("Step 3: Organizing results as JSON...")
+        buyer_language_insights = []
+        
+        for doc in all_retrieved_docs:
+            insight = {
+                'content': doc.page_content,
+                'metadata': doc.metadata if hasattr(doc, 'metadata') else {},
+                'relevance': 'high'  # Could add scoring logic here
+            }
+            buyer_language_insights.append(insight)
+        
+        buyer_language_json = json.dumps(buyer_language_insights, indent=2)
+        logger.info(f"✓ Organized {len(buyer_language_insights)} insights as JSON")
+        
+        # Step 4: Format the battle card using asset_template_battle-cards with buyer_language_insights
+        logger.info("Step 4: Formatting battle card with buyer language insights...")
+        
+        # Get the battle cards asset template
+        battle_card_template_data = get_latest_prompt_template('asset_template_battle-cards')
+        
+        if not battle_card_template_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="asset_template_battle-cards not found in DynamoDB"
+            )
+        
+        battle_card_template = battle_card_template_data['template_body']
+        
+        # Format the battle card using the template with buyer_language_insights
+        battle_card_prompt = battle_card_template.format(
+            competitor=competitor,
+            company_name=company_name or '',
+            target_audience=request.icp or '',
+            icp=request.icp or '',
+            buyer_language_insights=buyer_language_json,
+            user_provided_text=request.marketing_text or '',
+            company_domain=company_context.get('company_domain', ''),
+            self_described_positioning=company_context.get('self_described_positioning', '')
+        )
+        
+        # Run LLM to format the battle card
+        logger.info("Running final model with buyer language insights...")
+        format_messages = [HumanMessage(content=battle_card_prompt)]
+        format_response = await llm.ainvoke(format_messages)
+        refined_text = format_response.content
+        final_prompt = battle_card_prompt
+        
+        logger.info(f"✓ Battle card formatted: {len(refined_text)} chars")
+        
+        # Prepare sources from retrieved documents (convert to SourceItem objects)
+        from models import SourceItem
+        sources = []
+        for i, doc in enumerate(all_retrieved_docs[:20], 1):  # Limit to top 20 for sources
+            try:
+                # Extract metadata properly
+                metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+                
+                # Get filename/title from metadata
+                filename = metadata.get('title', metadata.get('filename', f'Reddit Post {i}'))
+                
+                # Get snippet
+                snippet = doc.page_content[:200] if hasattr(doc, 'page_content') else ''
+                
+                # Get score (from Document object directly if available)
+                score = getattr(doc, 'score', metadata.get('score', 0.0))
+                
+                source = SourceItem(
+                    filename=filename,
+                    snippet=snippet,
+                    score=float(score) if score else 0.0,
+                    source='reddit'  # More descriptive than 'qdrant'
+                )
+                sources.append(source)
+                logger.debug(f"Source {i}: {filename[:50]}... (score: {score})")
+            except Exception as e:
+                logger.warning(f"Could not create SourceItem {i}: {e}")
+        
+        logger.info(f"✓ Created {len(sources)} source items from {len(all_retrieved_docs)} documents")
+        
+        # Format retrieved_docs as list of dictionaries (required by RAGResultResponse model)
+        retrieved_docs = []
+        for doc in all_retrieved_docs:
+            if hasattr(doc, 'page_content'):
+                doc_dict = {
+                    'content': doc.page_content,
+                    'metadata': doc.metadata if hasattr(doc, 'metadata') else {},
+                    'source': 'qdrant'
+                }
+                retrieved_docs.append(doc_dict)
+        
+        # Generate technical email content for administrators (RAG pipeline details)
+        email_content = None
+        if is_administrator:
+            logger.info("Generating technical email content for administrator...")
+            email_content = f"""BATTLE CARDS RAG PIPELINE - TECHNICAL DETAILS
+
+================================================================================
+1. RAG GENERATION PROMPT (battle_cards_rag_build_template)
+================================================================================
+
+{rag_build_prompt}
+
+================================================================================
+2. RAG GENERATION RESULTS (Search Queries Generated)
+================================================================================
+
+{rag_build_result}
+
+================================================================================
+3. RAG RETURNED JSON (Buyer Language Insights)
+================================================================================
+
+Retrieved {len(all_retrieved_docs)} documents from Qdrant collection: {collection_name}
+
+{buyer_language_json}
+
+================================================================================
+4. FINAL PROMPT (asset_template_battle-cards)
+================================================================================
+
+{battle_card_prompt}
+
+================================================================================
+END OF TECHNICAL DETAILS
+================================================================================
+"""
+            logger.info(f"✓ Technical email content generated: {len(email_content)} chars")
+        
+        logger.info(f"✓ Battle cards pipeline completed - Output: {len(refined_text)} chars, Sources: {len(sources)}")
+        
+    except Exception as e:
+        logger.error(f"✗ Battle cards pipeline failed: {type(e).__name__}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing battle cards: {str(e)}"
+        )
+    
+    # Generate job ID and save
+    job_id = str(uuid.uuid4())
+    logger.info(f"Generated job_id: {job_id}")
+    
+    try:
+        job = Job(
+            job_id=job_id,
+            user_id=current_user.id,
+            status="completed",
+            refined_text=refined_text,
+            sources=[s.model_dump() if hasattr(s, 'model_dump') else s for s in sources],
+            retrieved_docs=retrieved_docs,
+            final_prompt=final_prompt,
+            email_content=email_content if is_administrator else None,
+            original_request=request.marketing_text,
+            topics=[f"Battle Cards: {competitor}"]
+        )
+        db.add(job)
+        db.commit()
+        logger.info("✓ Battle cards job saved to database")
+    except Exception as e:
+        logger.error(f"✗ Failed to save battle cards job: {str(e)}", exc_info=True)
+        raise
+    
+    logger.info(f"✓ Battle cards request completed successfully - job_id: {job_id}")
+    return RAGProcessResponse(job_id=job_id)
+

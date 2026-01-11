@@ -29,11 +29,73 @@ function HomePageContent() {
   const [isLoadingICPs, setIsLoadingICPs] = useState(false)
   const [operationalPainOptions, setOperationalPainOptions] = useState<string[]>([])
   const [isLoadingOperationalPains, setIsLoadingOperationalPains] = useState(false)
+  const [assetTypeOptions, setAssetTypeOptions] = useState<string[]>([])
+  const [isLoadingAssetTypes, setIsLoadingAssetTypes] = useState(false)
+  const [competitors, setCompetitors] = useState<string[]>([])
+  const [selectedCompetitor, setSelectedCompetitor] = useState<string>('')
+  const [isLoadingCompetitors, setIsLoadingCompetitors] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const COMPANY_OPTIONS = ['Algosec', 'CyberArk', 'JFrog', 'Cloudinary', 'Incredibuild']
 
+  // Check if battle cards is selected
+  const isBattleCards = assetType === 'battle-cards'
+
   // Define fetch functions before they're used in useEffect
+  const fetchAssetTypes = async () => {
+    setIsLoadingAssetTypes(true)
+    try {
+      const response = await ragAPI.getAssetTypes()
+      if (response && response.asset_types && response.asset_types.length > 0) {
+        setAssetTypeOptions(response.asset_types)
+        console.log('✓ Loaded asset types from DynamoDB:', response.asset_types)
+      } else {
+        // Fallback to default asset types
+        setAssetTypeOptions([
+          "one-pager",
+          "email",
+          "landing-page",
+          "blog",
+          "linkedin-post",
+          "blog-post"
+        ])
+      }
+    } catch (error) {
+      console.error('Error fetching asset types:', error)
+      setAssetTypeOptions([
+        "one-pager",
+        "email",
+        "landing-page",
+        "blog",
+        "linkedin-post",
+        "blog-post"
+      ])
+    } finally {
+      setIsLoadingAssetTypes(false)
+    }
+  }
+
+  const fetchCompetitors = async (companyName: string) => {
+    if (!companyName) return
+    
+    setIsLoadingCompetitors(true)
+    try {
+      const response = await ragAPI.getCompetitors(companyName)
+      if (response && response.competitors && response.competitors.length > 0) {
+        setCompetitors(response.competitors)
+        console.log('✓ Loaded competitors from S3:', response.competitors)
+      } else {
+        console.warn('No competitors found for company')
+        setCompetitors([])
+      }
+    } catch (error) {
+      console.error('Error fetching competitors:', error)
+      setCompetitors([])
+    } finally {
+      setIsLoadingCompetitors(false)
+    }
+  }
+
   const fetchCompanyData = async (companyName: string) => {
     if (!companyName) return
     
@@ -107,6 +169,11 @@ function HomePageContent() {
       return
     }
   }, [searchParams])
+
+  // Load asset types on mount
+  useEffect(() => {
+    fetchAssetTypes()
+  }, [])
 
   // Check authentication only after component mounts
   useEffect(() => {
@@ -218,6 +285,12 @@ function HomePageContent() {
       return
     }
 
+    // For battle cards, check competitor selection
+    if (isBattleCards && !selectedCompetitor.trim()) {
+      alert('Please select a competitor for battle cards')
+      return
+    }
+
     // For admins, ensure company is selected
     if (isAdminUser && !selectedCompany.trim()) {
       alert('Please select a company')
@@ -228,15 +301,31 @@ function HomePageContent() {
     setIsProcessing(true)
 
     try {
-      const response = await ragAPI.process(
-        selectedOperationalPain ? [selectedOperationalPain] : [""],
-        contextText.trim() || "",
-        {
-          assetType,
-          icp,
-          company: isAdminUser ? selectedCompany : undefined,
-        }
-      )
+      let response
+      
+      if (isBattleCards) {
+        // Use battle cards endpoint
+        response = await ragAPI.processBattleCards(
+          selectedCompetitor,
+          contextText.trim() || "",
+          {
+            icp,
+            company: isAdminUser ? selectedCompany : undefined,
+          }
+        )
+      } else {
+        // Use regular endpoint
+        response = await ragAPI.process(
+          selectedOperationalPain ? [selectedOperationalPain] : [""],
+          contextText.trim() || "",
+          {
+            assetType,
+            icp,
+            company: isAdminUser ? selectedCompany : undefined,
+          }
+        )
+      }
+      
       console.log('Response: ', response)
       // Open results in new tab
       const resultsUrl = `/results/${response.job_id}`
@@ -263,9 +352,10 @@ function HomePageContent() {
   const handleCompanySelect = (company: string) => {
     setSelectedCompany(company)
     setShowCompanyDialog(false)
-    // Fetch ICPs and operational pain points for the selected company
+    // Fetch ICPs, operational pain points, and competitors for the selected company
     if (company) {
       fetchCompanyData(company)
+      fetchCompetitors(company)
     }
   }
 
@@ -410,15 +500,15 @@ function HomePageContent() {
                     id="assetType"
                     value={assetType}
                     onChange={(e) => setAssetType(e.target.value)}
-                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100"
+                    disabled={isLoadingAssetTypes}
+                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <option value="">Select</option>
-                    <option value="one-pager">one-pager</option>
-                    <option value="email">email</option>
-                    <option value="landing page">landing page</option>
-                    <option value="blog">blog</option>
-                    <option value="linkedin post">linkedin post</option>
-                    <option value="blog post">blog post</option>
+                    <option value="">{isLoadingAssetTypes ? 'Loading...' : 'Select'}</option>
+                    {assetTypeOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -448,31 +538,58 @@ function HomePageContent() {
                   </select>
                 </div>
 
-                {/* Operational Pain */}
-                <div>
-                  <label
-                    htmlFor="operationalPain"
-                    className="block text-xs font-medium text-slate-700 mb-1"
-                  >
-                    Operational Pain Point
-                  </label>
-                  <select
-                    id="operationalPain"
-                    value={selectedOperationalPain}
-                    onChange={(e) => setSelectedOperationalPain(e.target.value)}
-                    disabled={isLoadingOperationalPains || operationalPainOptions.length === 0}
-                    className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <option value="">
-                      {isLoadingOperationalPains ? 'Loading...' : operationalPainOptions.length === 0 ? 'Select company first' : 'Select'}
-                    </option>
-                    {operationalPainOptions.map((option) => (
-                      <option key={option} value={option}>
-                        {option}
+                {/* Conditional: Show either Competitor (for battle cards) or Operational Pain */}
+                {isBattleCards ? (
+                  <div>
+                    <label
+                      htmlFor="competitor"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Competitor
+                    </label>
+                    <select
+                      id="competitor"
+                      value={selectedCompetitor}
+                      onChange={(e) => setSelectedCompetitor(e.target.value)}
+                      disabled={isLoadingCompetitors || competitors.length === 0}
+                      className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <option value="">
+                        {isLoadingCompetitors ? 'Loading...' : competitors.length === 0 ? 'Select company first' : 'Select'}
                       </option>
-                    ))}
-                  </select>
-                </div>
+                      {competitors.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label
+                      htmlFor="operationalPain"
+                      className="block text-xs font-medium text-slate-700 mb-1"
+                    >
+                      Operational Pain Point
+                    </label>
+                    <select
+                      id="operationalPain"
+                      value={selectedOperationalPain}
+                      onChange={(e) => setSelectedOperationalPain(e.target.value)}
+                      disabled={isLoadingOperationalPains || operationalPainOptions.length === 0}
+                      className="block w-full px-2 py-1.5 text-xs border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <option value="">
+                        {isLoadingOperationalPains ? 'Loading...' : operationalPainOptions.length === 0 ? 'Select company first' : 'Select'}
+                      </option>
+                      {operationalPainOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
               </section>
             </div>
