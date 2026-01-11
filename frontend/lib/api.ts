@@ -191,6 +191,15 @@ export const maintenanceAPI = {
     })
     return response.data
   },
+  queryCollection: async (collection: string, query: string, docType?: string, limit: number = 10) => {
+    const response = await apiClient.post('/maintenance/query-collection', {
+      collection,
+      query,
+      doc_type: docType,
+      limit
+    })
+    return response.data
+  },
   upsertData: async (dataType: 'reddit' | 'podcast' | 'youtube', files: File[], collection?: string, podcastFormat?: string) => {
     const formData = new FormData()
     files.forEach((file) => {

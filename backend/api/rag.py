@@ -701,9 +701,22 @@ async def process_battle_cards(
         for i, query in enumerate(search_queries[:10]):  # Limit to first 10 queries
             logger.info(f"Query {i+1}/{min(len(search_queries), 10)}: {query[:100]}...")
             try:
-                results = vector_store.search_reddit_posts(
+                # For battle cards, use direct search with minimal filtering for better recall
+                # The strict company_enumerations filters are too restrictive for competitive intel
+                results = vector_store.search_reddit_posts_minimal_filter(
                     query=query,
                     k=5,  # Get top 5 results per query
+                    collection_name=collection_name,
+                    doc_type='reddit_post'
+                )
+                all_retrieved_docs.extend(results)
+                logger.info(f"  Retrieved {len(results)} documents (scores: {[d.metadata.get('score', 0) for d in results[:3]]})")
+            except AttributeError:
+                # Fallback to regular search if minimal_filter method doesn't exist
+                logger.info(f"  Using standard search (no minimal_filter method)")
+                results = vector_store.search_reddit_posts(
+                    query=query,
+                    k=5,
                     company_enumerations=company_enumerations,
                     collection_name=collection_name,
                     company_name=company_name
@@ -774,26 +787,43 @@ async def process_battle_cards(
                 metadata = doc.metadata if hasattr(doc, 'metadata') else {}
                 
                 # Get filename/title from metadata
-                filename = metadata.get('title', metadata.get('filename', f'Reddit Post {i}'))
+                title = metadata.get('title', f'Reddit Post {i}')
                 
-                # Get snippet
-                snippet = doc.page_content[:200] if hasattr(doc, 'page_content') else ''
+                # Get full text content
+                full_text = doc.page_content if hasattr(doc, 'page_content') else ''
                 
-                # Get score (from Document object directly if available)
-                score = getattr(doc, 'score', metadata.get('score', 0.0))
+                # Get snippet (first 200 chars)
+                snippet = full_text[:200] if full_text else 'No content available'
+                
+                # Get score from metadata
+                score = metadata.get('score', 0.0)
+                
+                # Get citation/URL from metadata
+                citation = metadata.get('citation') or metadata.get('url') or metadata.get('link')
                 
                 source = SourceItem(
-                    filename=filename,
+                    filename=title,
+                    title=title,
                     snippet=snippet,
+                    text=full_text,  # Include full text for expansion
+                    citation=citation,  # Include URL/link
                     score=float(score) if score else 0.0,
-                    source='reddit'  # More descriptive than 'qdrant'
+                    source='reddit',
+                    doc_type=metadata.get('doc_type', 'reddit_post'),
+                    # Include all other relevant metadata fields
+                    channel=metadata.get('channel'),
+                    icp_role_type=metadata.get('icp_role_type')
                 )
                 sources.append(source)
-                logger.debug(f"Source {i}: {filename[:50]}... (score: {score})")
+                logger.debug(f"Source {i}: {title[:50]}... (score: {score}, has_text: {bool(full_text)}, has_citation: {bool(citation)})")
             except Exception as e:
                 logger.warning(f"Could not create SourceItem {i}: {e}")
         
         logger.info(f"✓ Created {len(sources)} source items from {len(all_retrieved_docs)} documents")
+        
+        # Log sample of sources for debugging
+        if sources:
+            logger.info(f"Sample source (first): title='{sources[0].title}', has_text={bool(sources[0].text)}, has_citation={bool(sources[0].citation)}, text_length={len(sources[0].text) if sources[0].text else 0}")
         
         # Format retrieved_docs as list of dictionaries (required by RAGResultResponse model)
         retrieved_docs = []

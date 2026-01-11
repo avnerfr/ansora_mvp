@@ -458,6 +458,88 @@ class VectorStore:
     def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], collection_name: str = None, company_name: str = None) -> List[Document]:
         search_results_points = self.search_doc_type(query, k, "yt_summary", company_enumerations, collection_name, company_name)
 
+    def search_reddit_posts_minimal_filter(self, query: str, k: int = 10, collection_name: str = None, doc_type: str = "reddit_post") -> List[Document]:
+        """
+        Search Reddit posts with minimal filtering - only doc_type filter.
+        Useful for competitive intelligence and battle cards where we want broad coverage.
+        No company-specific metadata filters applied.
+        """
+        try:
+            logger.info(f"🔍 Minimal filter search: k={k}, doc_type={doc_type}, collection={collection_name}")
+            
+            if self.embeddings is None:
+                logger.error("❌ OpenAI embeddings not initialized!")
+                return []
+            
+            logger.info(f"Query: {query[:100]}...")
+            
+            # Embed the query
+            openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
+            response = openai_client.embeddings.create(
+                input=query,
+                model=self._model_name
+            )
+            query_vector = response.data[0].embedding
+            
+            # Search with only doc_type filter (no company enumeration filters)
+            search_results = self.client.query_points(
+                collection_name=collection_name,
+                query=query_vector,
+                limit=k,
+                with_payload=True,
+                with_vectors=False,
+                query_filter=Filter(
+                    must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type))]
+                )
+            )
+            
+            # Convert to Documents
+            documents = []
+            for i, point in enumerate(search_results.points, 1):
+                payload = point.payload or {}
+                
+                # Try multiple fields for text content
+                text = (
+                    payload.get("text") or 
+                    payload.get("content") or 
+                    payload.get("full_text") or
+                    payload.get("selftext") or
+                    payload.get("snippet") or 
+                    payload.get("summary") or
+                    payload.get("citation") or 
+                    ""
+                )
+                
+                metadata = {
+                    "doc_type": doc_type,
+                    "score": point.score,
+                    "title": payload.get("title"),
+                    "citation": payload.get("citation"),
+                    "url": payload.get("url"),
+                    "link": payload.get("link"),
+                    "summary": payload.get("summary"),
+                    **payload  # Include all payload fields
+                }
+                
+                doc = Document(page_content=text, metadata=metadata)
+                documents.append(doc)
+                
+                # Enhanced logging
+                title_preview = metadata.get('title', 'Untitled')[:50]
+                text_length = len(text)
+                has_citation = bool(metadata.get('citation') or metadata.get('url') or metadata.get('link'))
+                logger.info(f"  {i}. {title_preview}... (score: {point.score:.4f}, text_len: {text_length}, has_link: {has_citation})")
+            
+            logger.info(f"✅ Retrieved {len(documents)} documents with minimal filter")
+            return documents
+            
+        except Exception as e:
+            logger.error(f"❌ Error in minimal filter search: {type(e).__name__}: {str(e)}", exc_info=True)
+            return []
+
+    def search_youtube_summaries(self, query: str, k: int = 3, company_enumerations: List[str] = [], collection_name: str = None, company_name: str = None) -> List[Document]:
+        search_results_points = self.search_doc_type(query, k, "yt_summary", company_enumerations, collection_name, company_name)
+
         # Convert Qdrant results to LangChain Documents
         documents = []
         for i, point in enumerate(search_results_points, 1):

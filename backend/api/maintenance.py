@@ -320,6 +320,91 @@ async def get_records(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class QueryCollectionRequest(BaseModel):
+    collection: str
+    query: str
+    doc_type: Optional[str] = None
+    limit: int = 10
+
+
+@router.post("/query-collection")
+async def query_collection(
+    request: QueryCollectionRequest,
+    current_user: User = Depends(require_admin)
+):
+    """Query a collection using semantic search with embedding."""
+    try:
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+        from core.config import settings
+        from openai import OpenAI
+        
+        # Check if collection exists
+        collections_response = vector_store.client.get_collections()
+        collection_names = [c.name for c in collections_response.collections]
+        
+        if request.collection not in collection_names:
+            raise HTTPException(status_code=404, detail=f"Collection '{request.collection}' not found")
+        
+        logger.info(f"Querying collection '{request.collection}' with: '{request.query}'" + 
+                   (f" (doc_type={request.doc_type})" if request.doc_type else ""))
+        
+        # Step 1: Embed the query
+        openai_client = OpenAI(
+            api_key=settings.DEEPINFRA_API_KEY,
+            base_url=settings.DEEPINFRA_API_BASE_URL
+        )
+        
+        response = openai_client.embeddings.create(
+            input=request.query,
+            model=vector_store._model_name  # Use same model as vectorstore
+        )
+        query_vector = response.data[0].embedding
+        logger.info(f"✓ Query embedded (vector dimension: {len(query_vector)})")
+        
+        # Step 2: Build filter if doc_type specified
+        query_filter = None
+        if request.doc_type:
+            query_filter = Filter(
+                must=[FieldCondition(key="doc_type", match=MatchValue(value=request.doc_type))]
+            )
+        
+        # Step 3: Query the collection
+        search_results = vector_store.client.query_points(
+            collection_name=request.collection,
+            query=query_vector,
+            limit=min(request.limit, 50),  # Cap at 50
+            with_payload=True,
+            with_vectors=False,
+            query_filter=query_filter
+        )
+        
+        # Step 4: Format results as JSON
+        results = []
+        for point in search_results.points:
+            result = {
+                "id": str(point.id),
+                "score": float(point.score),
+                "payload": point.payload
+            }
+            results.append(result)
+        
+        logger.info(f"✓ Retrieved {len(results)} results from {request.collection}")
+        
+        return {
+            "results": results,
+            "collection": request.collection,
+            "query": request.query,
+            "doc_type_filter": request.doc_type,
+            "count": len(results)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to query collection: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/upsert/{data_type}")
 async def upsert_data(
     data_type: str,

@@ -25,6 +25,11 @@ export default function MaintenancePage() {
   const [loadingStats, setLoadingStats] = useState(false)
   const [selectedDocType, setSelectedDocType] = useState<string>('')
   
+  // Query Collection state
+  const [queryTerm, setQueryTerm] = useState<string>('')
+  const [queryingCollection, setQueryingCollection] = useState(false)
+  const [queryResults, setQueryResults] = useState<any[]>([])
+
   // Create Collection Dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [newCollectionName, setNewCollectionName] = useState('')
@@ -138,6 +143,28 @@ export default function MaintenancePage() {
       console.error('Failed to fetch records:', error)
     } finally {
       setLoadingRecords(false)
+    }
+  }
+
+  const queryCollection = async () => {
+    if (!selectedCollection || !queryTerm.trim()) {
+      return
+    }
+    setQueryingCollection(true)
+    setQueryResults([])
+    try {
+      const data = await maintenanceAPI.queryCollection(
+        selectedCollection, 
+        queryTerm, 
+        selectedDocType || undefined, 
+        recordCount
+      )
+      setQueryResults(data.results || [])
+    } catch (error) {
+      console.error('Failed to query collection:', error)
+      setQueryResults([])
+    } finally {
+      setQueryingCollection(false)
     }
   }
 
@@ -572,6 +599,67 @@ export default function MaintenancePage() {
               <Button onClick={fetchRecords} variant="primary" isLoading={loadingRecords}>
                 Retrieve Records
               </Button>
+
+              {/* Query Collection Section */}
+              <div className="border-t border-gray-200 pt-6 mt-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  Query Collection
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Search Term
+                    </label>
+                    <input
+                      type="text"
+                      value={queryTerm}
+                      onChange={(e) => setQueryTerm(e.target.value)}
+                      placeholder="Enter search query..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter' && !queryingCollection) {
+                          queryCollection()
+                        }
+                      }}
+                    />
+                  </div>
+                  <Button 
+                    onClick={queryCollection} 
+                    variant="primary" 
+                    isLoading={queryingCollection}
+                    disabled={!selectedCollection || !queryTerm.trim()}
+                  >
+                    Query Collection
+                  </Button>
+                </div>
+
+                {/* Query Results Display */}
+                {queryResults.length > 0 && (
+                  <div className="mt-6">
+                    <h4 className="text-md font-medium text-gray-900 mb-4">
+                      Query Results ({queryResults.length})
+                    </h4>
+                    <div className="space-y-4 max-h-96 overflow-y-auto">
+                      {queryResults.map((result, index) => (
+                        <div key={index} className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                          <div className="text-xs text-blue-600 font-semibold mb-2">
+                            Score: {result.score?.toFixed(4)} | ID: {result.id}
+                          </div>
+                          <pre className="text-sm text-gray-700 whitespace-pre-wrap overflow-x-auto">
+                            {JSON.stringify(result, null, 2)}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {queryingCollection === false && queryResults.length === 0 && queryTerm && (
+                  <div className="mt-4 text-sm text-gray-500">
+                    No results found for "{queryTerm}"
+                  </div>
+                )}
+              </div>
 
               {/* Records Display */}
               {records.length > 0 && (
