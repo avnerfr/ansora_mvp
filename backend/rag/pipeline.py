@@ -829,23 +829,334 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
     return external_docs, combined_docs
 
 
-def build_vector_search_context(retrieved_docs: List[Any]) -> str:
+async def rerank_and_filter_documents(
+    retrieved_docs: List[Any],
+    retrieval_queries: str,
+    company_name: str | None = None,
+    company_domain: str | None = None,
+    known_competitors: List[str] | None = None
+) -> tuple[List[Any], str, str]:
     """
-    Build the vector search context JSON for the LLM prompt.
-
+    Rerank and filter retrieved documents using LLM to keep only relevant ones.
+    
     Args:
-        retrieved_docs: List of retrieved document objects
-
+        retrieved_docs: List of retrieved documents from RAG
+        retrieval_queries: The queries sent to RAG
+        company_name: Company name
+        company_domain: Company domain
+        known_competitors: List of known competitors
+    
     Returns:
-        str: JSON string containing vector search context
+        tuple: (filtered_docs, rerank_prompt, rerank_result)
+            - filtered_docs: List of filtered documents (subset of retrieved_docs)
+            - rerank_prompt: The prompt sent to reranking LLM
+            - rerank_result: The raw result from reranking LLM
     """
-    logger.info("================== Step 3. Building vector search context ====================")
+    from .dynamodb_prompts import get_latest_prompt_template
+    
+    logger.info("============== Step 2.5. Reranking and filtering RAG documents ================")
+    
+    if not retrieved_docs:
+        logger.warning("No documents to rerank, returning empty list")
+        return [], "", ""
+    
+    try:
+        # Get the reranking template from DynamoDB
+        rerank_template_data = get_latest_prompt_template('results_rerank_and_filter_template')
+        
+        if not rerank_template_data:
+            logger.warning("Reranking template not found in DynamoDB, skipping reranking and returning all documents")
+            return retrieved_docs, "", ""
+        
+        rerank_template = rerank_template_data['template_body']
+        logger.info(f"✓ Loaded results_rerank_and_filter_template from DynamoDB (edited by: {rerank_template_data.get('edited_by_sub', 'unknown')})")
+        
+        # Format retrieved docs as JSON string (candidates)
+        # Retrieved docs are now cleaned dicts with only relevant fields
+        candidates = []
+        for i, doc in enumerate(retrieved_docs, 1):
+            if isinstance(doc, dict):
+                # Already cleaned format - just add ID
+                doc_with_id = {'id': i, **doc}
+                candidates.append(doc_with_id)
+            else:
+                # Fallback for full document objects (shouldn't happen after cleaning)
+                doc_dict = {
+                    'id': i,
+                    'content': getattr(doc, 'page_content', ''),
+                    'metadata': getattr(doc, 'metadata', {})
+                }
+                candidates.append(doc_dict)
+        
+        candidates_json = json.dumps(candidates, indent=2)
+        
+        logger.info(f"Reranking {len(candidates)} documents...")
+        logger.info(f"Input size: {len(candidates_json)} chars, {count_tokens(candidates_json)} tokens")
+        
+        # Prepare template variables
+        known_competitors_str = ", ".join(known_competitors) if known_competitors else ""
+        template_vars = {
+            'company_name': company_name or '',
+            'company_domain': company_domain or '',
+            'knwn_compatitors': known_competitors_str,  # Note: keeping the typo from user's spec
+            'known_competitors': known_competitors_str,  # Also provide correct spelling
+            'retrieval_queries': retrieval_queries or '',
+            'candidates': candidates_json
+        }
+        
+        # Format the prompt with safe substitution
+        from string import Template
+        import re
+        try:
+            rerank_prompt = rerank_template.format(**template_vars)
+        except KeyError as e:
+            logger.warning(f"Template has undefined variable: {e}. Using safe substitution.")
+            template_str = re.sub(r'\{(\w+)\}', r'$\1', rerank_template)
+            template_obj = Template(template_str)
+            rerank_prompt = template_obj.safe_substitute(**template_vars)
+        
+        # Run LLM to filter documents
+        llm = ChatOpenAI(
+            model_name="deepseek-ai/DeepSeek-V3",
+            openai_api_key=settings.DEEPINFRA_API_KEY,
+            base_url=settings.DEEPINFRA_API_BASE_URL,
+            temperature=0.3,  # Lower temperature for more focused filtering
+        )
+        
+        logger.info("Running reranking model...")
+        messages = [HumanMessage(content=rerank_prompt)]
+        response = await llm.ainvoke(messages)
+        filtered_result = response.content
+        
+        logger.info(f"✓ Reranking completed: {len(filtered_result)} chars")
+        
+        # Parse the filtered results - expect JSON array of IDs or full documents
+        try:
+            # Try to parse as JSON
+            filtered_data = json.loads(filtered_result)
+            
+            # Handle different response formats
+            if isinstance(filtered_data, list):
+                # If it's a list of IDs (numbers)
+                if filtered_data and isinstance(filtered_data[0], (int, str)):
+                    filtered_ids = [int(id_val) if isinstance(id_val, str) and id_val.isdigit() else id_val for id_val in filtered_data]
+                    filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                    logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} documents by ID")
+                    return filtered_docs, rerank_prompt, filtered_result
+                # If it's a list of document objects
+                elif filtered_data and isinstance(filtered_data[0], dict):
+                    # Extract IDs from document objects
+                    filtered_ids = [doc.get('id') for doc in filtered_data if doc.get('id')]
+                    filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                    logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} documents by object ID")
+                    return filtered_docs, rerank_prompt, filtered_result
+            elif isinstance(filtered_data, dict):
+                # If it's a dict with 'documents' or 'filtered_results' key
+                docs_list = filtered_data.get('documents') or filtered_data.get('filtered_results') or filtered_data.get('results')
+                if docs_list:
+                    # Recursively process the nested list
+                    return await rerank_and_filter_documents(
+                        retrieved_docs=retrieved_docs,
+                        retrieval_queries=retrieval_queries,
+                        company_name=company_name,
+                        company_domain=company_domain,
+                        known_competitors=known_competitors
+                    )
+        
+        except json.JSONDecodeError:
+            # If not JSON, try to extract IDs from text
+            logger.warning("Reranking result is not valid JSON, attempting to extract IDs from text")
+            id_pattern = r'\b\d+\b'
+            found_ids = [int(id_str) for id_str in re.findall(id_pattern, filtered_result)]
+            if found_ids:
+                filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in found_ids]
+                logger.info(f"✓ Extracted {len(filtered_docs)}/{len(retrieved_docs)} documents from text")
+                return filtered_docs, rerank_prompt, filtered_result
+        
+        # If we couldn't parse the result, return all documents
+        logger.warning("Could not parse reranking result, returning all documents")
+        return retrieved_docs, rerank_prompt, filtered_result
+        
+    except Exception as e:
+        logger.error(f"✗ Error during reranking: {type(e).__name__}: {str(e)}", exc_info=True)
+        logger.warning("Returning all documents due to reranking error")
+        return retrieved_docs, "", str(e)
 
-    # join all documents metadata to a json array for the vector_search_context
-    vector_search_context = []
+
+async def rerank_and_filter_battle_cards(
+    retrieved_docs: List[Any],
+    company_name: str | None = None,
+    company_domain: str | None = None,
+    known_competitors: List[str] | None = None,
+    target_competitor: str | None = None,
+    icp: str | None = None
+) -> tuple[List[Any], str, str]:
+    """
+    Rerank and filter battle cards documents using LLM with battle-cards-specific template.
+    
+    Args:
+        retrieved_docs: List of retrieved documents from RAG
+        company_name: Company name
+        company_domain: Company domain
+        known_competitors: List of known competitors
+        target_competitor: The specific competitor selected for battle cards
+        icp: Target audience/ICP
+    
+    Returns:
+        tuple: (filtered_docs, rerank_prompt, rerank_result)
+    """
+    from .dynamodb_prompts import get_latest_prompt_template
+    
+    logger.info("============== Step 2.5. Reranking and filtering battle cards documents ================")
+    
+    if not retrieved_docs:
+        logger.warning("No documents to rerank, returning empty list")
+        return [], "", ""
+    
+    try:
+        # Get the battle cards specific reranking template from DynamoDB
+        rerank_template_data = get_latest_prompt_template('results_rerank_and_filter_battle_cards_template')
+        
+        if not rerank_template_data:
+            logger.warning("Battle cards reranking template not found in DynamoDB, skipping reranking and returning all documents")
+            return retrieved_docs, "", ""
+        
+        rerank_template = rerank_template_data['template_body']
+        logger.info(f"✓ Loaded results_rerank_and_filter_battle_cards_template from DynamoDB (edited by: {rerank_template_data.get('edited_by_sub', 'unknown')})")
+        
+        # Format retrieved docs as JSON string (candidates)
+        # Retrieved docs are now cleaned dicts with only relevant fields
+        candidates = []
+        for i, doc in enumerate(retrieved_docs, 1):
+            if isinstance(doc, dict):
+                # Already cleaned format - just add ID
+                doc_with_id = {'id': i, **doc}
+                candidates.append(doc_with_id)
+            else:
+                # Fallback for full document objects (shouldn't happen after cleaning)
+                doc_dict = {
+                    'id': i,
+                    'content': getattr(doc, 'page_content', ''),
+                    'metadata': getattr(doc, 'metadata', {})
+                }
+                candidates.append(doc_dict)
+        
+        candidates_json = json.dumps(candidates, indent=2)
+        
+        logger.info(f"Reranking {len(candidates)} battle cards documents...")
+        logger.info(f"Input size: {len(candidates_json)} chars, {count_tokens(candidates_json)} tokens")
+        
+        # Prepare battle-cards-specific template variables
+        known_competitors_str = ", ".join(known_competitors) if known_competitors else ""
+        template_vars = {
+            'company_name': company_name or '',
+            'company_domain': company_domain or '',
+            'knwn_compatitors': known_competitors_str,  # Note: keeping the typo from user's spec
+            'known_competitors': known_competitors_str,  # Also provide correct spelling
+            'target_competitor': target_competitor or '',
+            'icp': icp or '',
+            'target_audience': icp or '',  # Alias
+            'candidates': candidates_json
+        }
+        
+        # Format the prompt with safe substitution
+        from string import Template
+        import re
+        try:
+            rerank_prompt = rerank_template.format(**template_vars)
+        except KeyError as e:
+            logger.warning(f"Template has undefined variable: {e}. Using safe substitution.")
+            template_str = re.sub(r'\{(\w+)\}', r'$\1', rerank_template)
+            template_obj = Template(template_str)
+            rerank_prompt = template_obj.safe_substitute(**template_vars)
+        
+        # Run LLM to filter documents
+        llm = ChatOpenAI(
+            model_name="deepseek-ai/DeepSeek-V3",
+            openai_api_key=settings.DEEPINFRA_API_KEY,
+            base_url=settings.DEEPINFRA_API_BASE_URL,
+            temperature=0.3,  # Lower temperature for more focused filtering
+        )
+        
+        logger.info("Running battle cards reranking model...")
+        messages = [HumanMessage(content=rerank_prompt)]
+        response = await llm.ainvoke(messages)
+        filtered_result = response.content
+        
+        logger.info(f"✓ Battle cards reranking completed: {len(filtered_result)} chars")
+        
+        # Parse the filtered results - expect JSON array of IDs or full documents
+        try:
+            # Try to parse as JSON
+            filtered_data = json.loads(filtered_result)
+            
+            # Handle different response formats
+            if isinstance(filtered_data, list):
+                # If it's a list of IDs (numbers)
+                if filtered_data and isinstance(filtered_data[0], (int, str)):
+                    filtered_ids = [int(id_val) if isinstance(id_val, str) and id_val.isdigit() else id_val for id_val in filtered_data]
+                    filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                    logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents by ID")
+                    return filtered_docs, rerank_prompt, filtered_result
+                # If it's a list of document objects
+                elif filtered_data and isinstance(filtered_data[0], dict):
+                    # Extract IDs from document objects
+                    filtered_ids = [doc.get('id') for doc in filtered_data if doc.get('id')]
+                    filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                    logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents by object ID")
+                    return filtered_docs, rerank_prompt, filtered_result
+            elif isinstance(filtered_data, dict):
+                # If it's a dict with 'documents' or 'filtered_results' key
+                docs_list = filtered_data.get('documents') or filtered_data.get('filtered_results') or filtered_data.get('results')
+                if docs_list:
+                    # Recursively process the nested list
+                    return await rerank_and_filter_battle_cards(
+                        retrieved_docs=retrieved_docs,
+                        company_name=company_name,
+                        company_domain=company_domain,
+                        known_competitors=known_competitors,
+                        target_competitor=target_competitor,
+                        icp=icp
+                    )
+        
+        except json.JSONDecodeError:
+            # If not JSON, try to extract IDs from text
+            logger.warning("Battle cards reranking result is not valid JSON, attempting to extract IDs from text")
+            id_pattern = r'\b\d+\b'
+            found_ids = [int(id_str) for id_str in re.findall(id_pattern, filtered_result)]
+            if found_ids:
+                filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in found_ids]
+                logger.info(f"✓ Extracted {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents from text")
+                return filtered_docs, rerank_prompt, filtered_result
+        
+        # If we couldn't parse the result, return all documents
+        logger.warning("Could not parse battle cards reranking result, returning all documents")
+        return retrieved_docs, rerank_prompt, filtered_result
+        
+    except Exception as e:
+        logger.error(f"✗ Error during battle cards reranking: {type(e).__name__}: {str(e)}", exc_info=True)
+        logger.warning("Returning all documents due to battle cards reranking error")
+        return retrieved_docs, "", str(e)
+
+
+def clean_documents_for_reranking(retrieved_docs: List[Any]) -> List[Dict[str, Any]]:
+    """
+    Clean documents to only include relevant marketing fields before reranking.
+    This reduces token usage significantly by removing unnecessary metadata.
+    
+    Args:
+        retrieved_docs: List of retrieved document objects with full metadata
+    
+    Returns:
+        List of cleaned document dictionaries with only essential fields
+    """
+    logger.info("Cleaning documents: extracting only relevant fields for reranking...")
+    
+    cleaned_docs = []
     for doc in retrieved_docs:
         if hasattr(doc, 'metadata') and doc.metadata:
-            doc_context = {
+            # Extract only the fields we actually use
+            cleaned_doc = {
                 "title": doc.metadata.get('title', ''),
                 "citation": doc.metadata.get('citation', ''),
                 "key_issues": doc.metadata.get('key_issues', ''),
@@ -855,15 +1166,68 @@ def build_vector_search_context(retrieved_docs: List[Any]) -> str:
                 "implicit_risks": doc.metadata.get('implicit_risks', ''),
                 "score": doc.metadata.get('score', 0)
             }
-            vector_search_context.append(doc_context)
-    vector_search_context_text = json.dumps(vector_search_context, indent=4)
-    vector_search_context = vector_search_context_text
+            cleaned_docs.append(cleaned_doc)
+        elif isinstance(doc, dict):
+            # Handle dict format (already cleaned or from battle cards)
+            metadata = doc.get('metadata', {})
+            cleaned_doc = {
+                "title": metadata.get('title', ''),
+                "citation": metadata.get('citation', ''),
+                "key_issues": metadata.get('key_issues', ''),
+                "pain_phrases": metadata.get('pain_phrases', ''),
+                "emotional_triggers": metadata.get('emotional_triggers', ''),
+                "buyer_language": metadata.get('buyer_language', ''),
+                "implicit_risks": metadata.get('implicit_risks', ''),
+                "score": metadata.get('score', 0)
+            }
+            cleaned_docs.append(cleaned_doc)
+    
+    # Calculate token savings
+    original_size = sum(len(str(doc)) for doc in retrieved_docs)
+    cleaned_size = sum(len(str(doc)) for doc in cleaned_docs)
+    logger.info(f"✓ Cleaned {len(cleaned_docs)} documents: {original_size} → {cleaned_size} chars ({100 * (1 - cleaned_size/original_size):.1f}% reduction)")
+    
+    return cleaned_docs
+
+
+def build_vector_search_context(retrieved_docs: List[Any]) -> str:
+    """
+    Build the vector search context JSON for the LLM prompt.
+
+    Args:
+        retrieved_docs: List of retrieved document objects (can be cleaned dicts or full docs)
+
+    Returns:
+        str: JSON string containing vector search context
+    """
+    logger.info("================== Step 3. Building vector search context ====================")
+
+    # If already cleaned (dict format), use directly
+    if retrieved_docs and isinstance(retrieved_docs[0], dict):
+        vector_search_context_text = json.dumps(retrieved_docs, indent=4)
+    else:
+        # Extract fields from full document objects
+        vector_search_context = []
+        for doc in retrieved_docs:
+            if hasattr(doc, 'metadata') and doc.metadata:
+                doc_context = {
+                    "title": doc.metadata.get('title', ''),
+                    "citation": doc.metadata.get('citation', ''),
+                    "key_issues": doc.metadata.get('key_issues', ''),
+                    "pain_phrases": doc.metadata.get('pain_phrases', ''),
+                    "emotional_triggers": doc.metadata.get('emotional_triggers', ''),
+                    "buyer_language": doc.metadata.get('buyer_language', ''),
+                    "implicit_risks": doc.metadata.get('implicit_risks', ''),
+                    "score": doc.metadata.get('score', 0)
+                }
+                vector_search_context.append(doc_context)
+        vector_search_context_text = json.dumps(vector_search_context, indent=4)
 
     logger.info(
-        f"✓ Vector search context built: {len(vector_search_context)} chars from {len(retrieved_docs)} sources"
+        f"✓ Vector search context built: {len(vector_search_context_text)} chars from {len(retrieved_docs)} sources"
     )
 
-    return vector_search_context
+    return vector_search_context_text
 
 
 def build_final_prompt(
@@ -1134,8 +1498,22 @@ async def process_rag(
         # Step 2: Retrieve documents from vector DB
         external_docs, retrieved_docs = await retrieve_rag_documents(retrieval_query, company_enumerations,collection_name, company_name)
 
-        # Step 3: Build vector search context
-        vector_search_context = build_vector_search_context(retrieved_docs)
+        # Step 2.4: Clean documents to reduce token usage before reranking
+        cleaned_docs = clean_documents_for_reranking(retrieved_docs)
+
+        # Step 2.5: Rerank and filter cleaned documents
+        filtered_docs, rerank_prompt, rerank_result = await rerank_and_filter_documents(
+            retrieved_docs=cleaned_docs,
+            retrieval_queries=retrieval_query,
+            company_name=company_name,
+            company_domain=company_details.company_context.company_domain if company_details else None,
+            known_competitors=company_details.company_context.known_competitors if company_details else None
+        )
+        
+        logger.info(f"✓ After reranking: {len(filtered_docs)}/{len(cleaned_docs)} documents retained")
+
+        # Step 3: Build vector search context from filtered documents (already cleaned)
+        vector_search_context = build_vector_search_context(filtered_docs)
 
 
         backgrounds_str = ", ".join(backgrounds)
@@ -1190,7 +1568,8 @@ async def process_rag(
         try:
             email_sent, email_content = send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
                                                    company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context, 
-                                                   prompt, refined_text, sources, retrieved_docs, send=is_administrator)
+                                                   prompt, refined_text, sources, retrieved_docs, send=is_administrator,
+                                                   rerank_prompt=rerank_prompt, rerank_result=rerank_result)
             if is_administrator:
                 if email_sent:
                     logger.info("Email sent successfully to administrators")
@@ -1202,7 +1581,7 @@ async def process_rag(
             try:
                 email_content = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
                                                     company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context,
-                                                    prompt, refined_text, sources, retrieved_docs)
+                                                    prompt, refined_text, sources, retrieved_docs, rerank_prompt, rerank_result)
             except Exception as e2:
                 logger.error(f"Failed to build email content: {e2}", exc_info=True)
         
@@ -1247,7 +1626,7 @@ def get_gmail_service():
 
 def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template, 
                         company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context, 
-                        prompt, refined_text, sources, retrieved_docs):
+                        prompt, refined_text, sources, retrieved_docs, rerank_prompt="", rerank_result=""):
     """Build email content string. Returns the email body as a string."""
     # Build email content
     email_body = f"User ID: {user_id}"
@@ -1305,6 +1684,15 @@ def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, t
     email_body += f"\n\n------------------------------------------------\n"
     email_body += f"\nVector Search Results:\n{vector_search_context}"
     email_body += f"\n\n------------------------------------------------\n"
+    
+    # Add reranking information if available
+    if rerank_prompt:
+        email_body += f"\nRerank and Filter Prompt:\n{rerank_prompt}"
+        email_body += f"\n\n------------------------------------------------\n"
+    if rerank_result:
+        email_body += f"\nRerank and Filter Result:\n{rerank_result}"
+        email_body += f"\n\n------------------------------------------------\n"
+    
     email_body += f"\nAsset Creation Prompt:\n{prompt}"
     email_body += f"\n\n------------------------------------------------\n"
     email_body += f"\nAsset Creation Result:\n{refined_text}"
@@ -1315,7 +1703,7 @@ def build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, t
 
 def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template, 
                 company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context, 
-                prompt, refined_text, sources, retrieved_docs, send: bool = True):
+                prompt, refined_text, sources, retrieved_docs, send: bool = True, rerank_prompt="", rerank_result=""):
     """Send email notification using Gmail API. Returns (success: bool, email_content: str)."""
     logger.info(f"Attempting to send email notification via Gmail API...")
     logger.info(f"Sender email configured: {bool(sender_email)}")
@@ -1324,7 +1712,7 @@ def send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
     # Build email content
     email_body = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
                                      company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context,
-                                     prompt, refined_text, sources, retrieved_docs)
+                                     prompt, refined_text, sources, retrieved_docs, rerank_prompt, rerank_result)
     
     # If not sending, just return the content
     if not send:

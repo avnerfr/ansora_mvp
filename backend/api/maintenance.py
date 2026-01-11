@@ -348,6 +348,9 @@ async def query_collection(
         logger.info(f"Querying collection '{request.collection}' with: '{request.query}'" + 
                    (f" (doc_type={request.doc_type})" if request.doc_type else ""))
         
+        # Log the full query text before embedding
+        logger.info(f"Query text to embed: '{request.query}'")
+        
         # Step 1: Embed the query
         openai_client = OpenAI(
             api_key=settings.DEEPINFRA_API_KEY,
@@ -359,7 +362,7 @@ async def query_collection(
             model=vector_store._model_name  # Use same model as vectorstore
         )
         query_vector = response.data[0].embedding
-        logger.info(f"✓ Query embedded (vector dimension: {len(query_vector)})")
+        logger.info(f"✓ Query embedded (model: {vector_store._model_name}, vector dimension: {len(query_vector)})")
         
         # Step 2: Build filter if doc_type specified
         query_filter = None

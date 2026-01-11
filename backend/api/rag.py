@@ -728,20 +728,38 @@ async def process_battle_cards(
         
         logger.info(f"✓ Retrieved total of {len(all_retrieved_docs)} documents from Qdrant")
         
-        # Step 3: Organize results as JSON
-        logger.info("Step 3: Organizing results as JSON...")
-        buyer_language_insights = []
+        # Step 2.4: Clean documents to reduce token usage before reranking
+        logger.info("Step 2.4: Cleaning documents for reranking...")
+        from rag.pipeline import clean_documents_for_reranking, rerank_and_filter_battle_cards
         
-        for doc in all_retrieved_docs:
-            insight = {
-                'content': doc.page_content,
-                'metadata': doc.metadata if hasattr(doc, 'metadata') else {},
-                'relevance': 'high'  # Could add scoring logic here
-            }
-            buyer_language_insights.append(insight)
+        # Clean to only relevant fields before reranking
+        cleaned_docs = clean_documents_for_reranking(all_retrieved_docs)
+        
+        # Step 2.5: Rerank and filter cleaned documents using battle cards template
+        logger.info("Step 2.5: Reranking and filtering battle cards documents...")
+        
+        # Get company domain and competitors from company_details
+        company_domain = company_details.company_context.company_domain if company_details else None
+        known_competitors = company_details.company_context.known_competitors if company_details else None
+        
+        # Use battle-cards-specific reranking function with cleaned docs
+        filtered_docs, rerank_prompt, rerank_result = await rerank_and_filter_battle_cards(
+            retrieved_docs=cleaned_docs,
+            company_name=company_name,
+            company_domain=company_domain,
+            known_competitors=known_competitors,
+            target_competitor=competitor,  # The competitor selected from dropdown
+            icp=request.icp  # Target audience from dropdown
+        )
+        
+        logger.info(f"✓ After reranking: {len(filtered_docs)}/{len(cleaned_docs)} documents retained")
+        
+        # Step 3: Organize filtered results as JSON (already cleaned)
+        logger.info("Step 3: Organizing filtered results as JSON...")
+        buyer_language_insights = filtered_docs  # Already in the correct format
         
         buyer_language_json = json.dumps(buyer_language_insights, indent=2)
-        logger.info(f"✓ Organized {len(buyer_language_insights)} insights as JSON")
+        logger.info(f"✓ Organized {len(buyer_language_insights)} filtered insights as JSON (using standard fields)")
         
         # Step 4: Format the battle card using asset_template_battle-cards with buyer_language_insights
         logger.info("Step 4: Formatting battle card with buyer language insights...")
@@ -855,15 +873,28 @@ async def process_battle_cards(
 {rag_build_result}
 
 ================================================================================
-3. RAG RETURNED JSON (Buyer Language Insights)
+3. RERANK AND FILTER PROMPT (results_rerank_and_filter_template)
+================================================================================
+
+{rerank_prompt if rerank_prompt else 'Reranking not performed or template not available'}
+
+================================================================================
+4. RERANK AND FILTER RESULTS
+================================================================================
+
+{rerank_result if rerank_result else 'No reranking results available'}
+
+================================================================================
+5. RAG RETURNED JSON (Buyer Language Insights - After Filtering)
 ================================================================================
 
 Retrieved {len(all_retrieved_docs)} documents from Qdrant collection: {collection_name}
+(After reranking filter applied)
 
 {buyer_language_json}
 
 ================================================================================
-4. FINAL PROMPT (asset_template_battle-cards)
+6. FINAL PROMPT (asset_template_battle-cards)
 ================================================================================
 
 {battle_card_prompt}
