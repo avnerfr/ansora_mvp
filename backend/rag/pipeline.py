@@ -945,23 +945,65 @@ async def rerank_and_filter_documents(
                     return filtered_docs, rerank_prompt, filtered_result
                 # If it's a list of document objects
                 elif filtered_data and isinstance(filtered_data[0], dict):
-                    # Extract IDs from document objects
-                    filtered_ids = [doc.get('id') for doc in filtered_data if doc.get('id')]
-                    filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
-                    logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} documents by object ID")
-                    return filtered_docs, rerank_prompt, filtered_result
+                    # Extract IDs from document objects - try multiple field names
+                    filtered_ids = []
+                    for doc in filtered_data:
+                        # Try 'id', 'insight_id', or any field ending with '_id'
+                        doc_id = doc.get('id') or doc.get('insight_id')
+                        if not doc_id:
+                            # Try to find any field ending with '_id'
+                            for key, value in doc.items():
+                                if key.endswith('_id') and isinstance(value, (int, str)):
+                                    doc_id = value
+                                    break
+                        if doc_id:
+                            filtered_ids.append(int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id)
+                    
+                    if filtered_ids:
+                        filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                        logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} documents by insight_id/id")
+                        return filtered_docs, rerank_prompt, filtered_result
+                    else:
+                        logger.warning("No valid IDs found in document objects")
+                        return retrieved_docs, rerank_prompt, filtered_result
             elif isinstance(filtered_data, dict):
-                # If it's a dict with 'documents' or 'filtered_results' key
-                docs_list = filtered_data.get('documents') or filtered_data.get('filtered_results') or filtered_data.get('results')
-                if docs_list:
-                    # Recursively process the nested list
-                    return await rerank_and_filter_documents(
-                        retrieved_docs=retrieved_docs,
-                        retrieval_queries=retrieval_queries,
-                        company_name=company_name,
-                        company_domain=company_domain,
-                        known_competitors=known_competitors
-                    )
+                # If it's a dict with a key containing a list of documents/insights
+                docs_list = (filtered_data.get('documents') or 
+                            filtered_data.get('filtered_results') or 
+                            filtered_data.get('results') or
+                            filtered_data.get('insights') or
+                            filtered_data.get('selected_insights'))
+                
+                if docs_list and isinstance(docs_list, list):
+                    # Extract IDs from the nested list
+                    logger.info(f"Found nested list with {len(docs_list)} items")
+                    filtered_ids = []
+                    for doc in docs_list:
+                        if isinstance(doc, dict):
+                            doc_id = doc.get('id') or doc.get('insight_id')
+                            if not doc_id:
+                                for key, value in doc.items():
+                                    if key.endswith('_id') and isinstance(value, (int, str)):
+                                        doc_id = value
+                                        break
+                            if doc_id:
+                                filtered_ids.append(int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id)
+                        elif isinstance(doc, (int, str)):
+                            filtered_ids.append(int(doc) if isinstance(doc, str) and doc.isdigit() else doc)
+                    
+                    logger.info(f"Extracted IDs: {filtered_ids}")
+                    
+                    if filtered_ids:
+                        filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                        logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} documents from nested object")
+                        if filtered_docs:
+                            return filtered_docs, rerank_prompt, filtered_result
+                        else:
+                            logger.warning(f"No documents matched the extracted IDs {filtered_ids[:10]}... (candidate IDs are 1-{len(retrieved_docs)})")
+                            return retrieved_docs, rerank_prompt, filtered_result
+                    else:
+                        logger.warning("No IDs could be extracted from nested list")
+                        return retrieved_docs, rerank_prompt, filtered_result
         
         except json.JSONDecodeError:
             # If not JSON, try to extract IDs from text
@@ -1084,6 +1126,11 @@ async def rerank_and_filter_battle_cards(
         filtered_result = response.content
         
         logger.info(f"✓ Battle cards reranking completed: {len(filtered_result)} chars")
+
+        logger.info(f"---------------------------------------------------------------------------------")
+        logger.info(f"Battle cards reranking result: ")
+        logger.info(f"{filtered_result}")
+        logger.info(f"---------------------------------------------------------------------------------")
         
         # Parse the filtered results - expect JSON array of IDs or full documents
         try:
@@ -1100,24 +1147,65 @@ async def rerank_and_filter_battle_cards(
                     return filtered_docs, rerank_prompt, filtered_result
                 # If it's a list of document objects
                 elif filtered_data and isinstance(filtered_data[0], dict):
-                    # Extract IDs from document objects
-                    filtered_ids = [doc.get('id') for doc in filtered_data if doc.get('id')]
-                    filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
-                    logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents by object ID")
-                    return filtered_docs, rerank_prompt, filtered_result
+                    # Extract IDs from document objects - try multiple field names
+                    filtered_ids = []
+                    for doc in filtered_data:
+                        # Try 'id', 'insight_id', or any field ending with '_id'
+                        doc_id = doc.get('id') or doc.get('insight_id')
+                        if not doc_id:
+                            # Try to find any field ending with '_id'
+                            for key, value in doc.items():
+                                if key.endswith('_id') and isinstance(value, (int, str)):
+                                    doc_id = value
+                                    break
+                        if doc_id:
+                            filtered_ids.append(int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id)
+                    
+                    if filtered_ids:
+                        filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                        logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents by insight_id/id")
+                        return filtered_docs, rerank_prompt, filtered_result
+                    else:
+                        logger.warning("No valid IDs found in document objects")
+                        return retrieved_docs, rerank_prompt, filtered_result
             elif isinstance(filtered_data, dict):
-                # If it's a dict with 'documents' or 'filtered_results' key
-                docs_list = filtered_data.get('documents') or filtered_data.get('filtered_results') or filtered_data.get('results')
-                if docs_list:
-                    # Recursively process the nested list
-                    return await rerank_and_filter_battle_cards(
-                        retrieved_docs=retrieved_docs,
-                        company_name=company_name,
-                        company_domain=company_domain,
-                        known_competitors=known_competitors,
-                        target_competitor=target_competitor,
-                        icp=icp
-                    )
+                # If it's a dict with a key containing a list of documents/insights
+                docs_list = (filtered_data.get('documents') or 
+                            filtered_data.get('filtered_results') or 
+                            filtered_data.get('results') or
+                            filtered_data.get('insights') or
+                            filtered_data.get('selected_insights'))
+                
+                if docs_list and isinstance(docs_list, list):
+                    # Extract IDs from the nested list
+                    logger.info(f"Found nested list with {len(docs_list)} items")
+                    filtered_ids = []
+                    for doc in docs_list:
+                        if isinstance(doc, dict):
+                            doc_id = doc.get('id') or doc.get('insight_id')
+                            if not doc_id:
+                                for key, value in doc.items():
+                                    if key.endswith('_id') and isinstance(value, (int, str)):
+                                        doc_id = value
+                                        break
+                            if doc_id:
+                                filtered_ids.append(int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id)
+                        elif isinstance(doc, (int, str)):
+                            filtered_ids.append(int(doc) if isinstance(doc, str) and doc.isdigit() else doc)
+                    
+                    logger.info(f"Extracted IDs: {filtered_ids}")
+                    
+                    if filtered_ids:
+                        filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
+                        logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents from nested object")
+                        if filtered_docs:
+                            return filtered_docs, rerank_prompt, filtered_result
+                        else:
+                            logger.warning(f"No documents matched the extracted IDs {filtered_ids[:10]}... (candidate IDs are 1-{len(retrieved_docs)})")
+                            return retrieved_docs, rerank_prompt, filtered_result
+                    else:
+                        logger.warning("No IDs could be extracted from nested list")
+                        return retrieved_docs, rerank_prompt, filtered_result
         
         except json.JSONDecodeError:
             # If not JSON, try to extract IDs from text
