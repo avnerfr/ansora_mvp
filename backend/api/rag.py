@@ -248,9 +248,15 @@ async def process_marketing_material(
     
     # Get user's template or use override
     template = request.template_override
+    logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+    logger.info(f"template : {template}")
+    logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
     if not template:
         template_record = db.query(PromptTemplate).filter(PromptTemplate.user_id == current_user.id).first()
         template = template_record.template if template_record else DEFAULT_TEMPLATE
+        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+        logger.info(f"template_record : {template_record}")
+        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
         logger.info(f"Using {'custom' if template_record else 'default'} template")
     else:
         logger.info("Using template override from request")
@@ -260,6 +266,17 @@ async def process_marketing_material(
         import traceback
         logger.info(f"[Request {request_id}] Calling RAG pipeline...")
         logger.debug(f"[Request {request_id}] Call stack: {''.join(traceback.format_stack()[-3:-1])}")
+        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+        logger.info(f"current_user.id, : {current_user.id,}")
+        logger.info(f"backgrounds : {request.backgrounds}")
+        logger.info(f"marketing_text : {request.marketing_text}")
+        logger.info(f"asset_type : {request.asset_type}")
+        logger.info(f"icp : {request.icp}")
+        logger.info(f"template : {template}")
+        logger.info(f"company_name : {company_name}")
+        logger.info(f"company_details : {company_details}")
+        logger.info(f"is_administrator : {is_administrator}")
+        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
         refined_text, sources, retrieved_docs, final_prompt, email_content = await process_rag(
             user_id=current_user.id,
             backgrounds=request.backgrounds,

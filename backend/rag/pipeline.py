@@ -1633,7 +1633,7 @@ async def process_rag(
         tuple: (refined_text, sources_list, retrieved_docs_list, final_prompt, email_content)
     """
     import uuid as uuid_lib
-    
+
     # Create a unique execution key
     execution_key = f"{request_id}_{user_id}_{hash(tuple(backgrounds))}_{hash(marketing_text)}"
     
@@ -1712,6 +1712,8 @@ async def process_rag(
             company_name=company_name,
             company_details=company_details
         )
+
+
 
         # Step 5: Generate LLM response
         refined_text = await generate_llm_response(prompt)

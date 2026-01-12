@@ -32,7 +32,10 @@ DEFAULT_TEMPLATE = """
 Role and Voice:
 {company_value_proposition}
 company domain is {company_domain}
-You are writing as {company_name}, to a peer in Network & Security Operations. Tone: colleague-to-colleague, technical, confident, empathetic, operationally savvy. No fluff, no marketing hype. Goal: make the recipient say: “Yes, I’ve lived that pain.”
+You are writing as {company_name}, to a peer who owns day-to-day operational outcomes in your target domain.
+Tone: colleague-to-colleague, technical when needed, confident, empathetic, and operationally savvy.
+No fluff, no marketing hype.
+Goal: make the recipient say: “Yes, I’ve lived that pain.”
 
 Core Rules:
 Always start from a concrete operational pain in INSIGHTS_JSON. Pick one primary insight only.
@@ -67,9 +70,6 @@ company's latest announcements are:
 company's competitors are:
 {competition_analysis}
 
-TARGET_AUDIENCE:
-{target_audience}
-
 INSIGHT SELECTION AND LANGUAGE AGGREGATION (MANDATORY INTERNAL STEP)
 
 You must perform the following steps BEFORE generating any asset.
@@ -79,6 +79,23 @@ CORE RULE:
 The OPERATIONAL_PAIN_POINT is the single source of truth.
 All insights and language must strictly serve this pain point.
 Do NOT introduce new or adjacent problems.
+
+INSIGHT–AUDIENCE COMPATIBILITY CHECK (MANDATORY)
+
+Before selecting the Primary Insight:
+
+- Validate that the insight reflects how the TARGET_AUDIENCE
+  experiences and describes the OPERATIONAL_PAIN_POINT in practice.
+
+Exclude insights that:
+- are written from an infrastructure, cloud economics, or FinOps perspective
+- focus on storage tiers, archival strategy, or long-term retention
+- assume ownership of cloud provider configuration or billing
+
+Only select insights where:
+- the pain is experienced during content production, publishing, or delivery
+- the language reflects day-to-day media workflows, deadlines, or asset handling
+- the failure impacts speed, reuse, quality, or coordination — not just cost
 
 1. Primary Insight Selection
 - Select EXACTLY ONE operational insight from INSIGHTS_JSON.
@@ -93,6 +110,21 @@ Do NOT introduce new or adjacent problems.
 - Only include language that describes the SAME operational pain point.
 - Supporting phrases may intensify urgency or realism, but may not add scope.
 
+TARGET_AUDIENCE: {target_audience}
+
+Audience Alignment Check (MANDATORY)
+
+Before selecting or aggregating any buyer language:
+- Validate that the language reflects how the TARGET_AUDIENCE
+  would naturally describe this pain in their day-to-day work.
+- If language reflects a different role’s perspective,
+  rephrase internally or exclude it.
+
+Do NOT surface language that implies:
+- executive ownership if TARGET_AUDIENCE is operational
+- budget responsibility if TARGET_AUDIENCE does not own spend
+- strategic or business framing unless explicitly present in the insight
+
 3. Narrative Constraint
 - All generated assets MUST:
   - Stay strictly anchored to the OPERATIONAL_PAIN_POINT.
@@ -105,6 +137,28 @@ IMPORTANT:
 - Do NOT output the primary insight, supporting phrases, or selection logic.
 - Only output the final asset content according to the requested ASSET_TYPE structure.
 
+TARGET AUDIENCE LENS (MANDATORY CONTEXT FILTER)
+
+You must interpret all insights, buyer language, and operational pain
+through the lens of the specified TARGET_AUDIENCE,
+without changing the underlying OPERATIONAL_PAIN_POINT.
+
+The TARGET_AUDIENCE determines:
+- which operational moments are emphasized
+- which consequences feel personal vs background noise
+- which internal language sounds natural and credible
+
+Do NOT:
+- introduce new pains specific to the audience
+- shift the pain to strategy, budget, leadership, or outcomes
+  unless explicitly present in INSIGHTS_JSON
+
+Do:
+- emphasize hands-on friction for practitioner audiences
+- emphasize accountability and exposure for leadership audiences
+- emphasize audit pressure and process breakdown for compliance audiences
+
+The audience lens shapes expression and emphasis — NOT scope.
 
 ---------------------------------------------------------------
 OUTPUT
@@ -123,7 +177,7 @@ Avoid generic security or marketing buzzwords.
 """
 
 
-_DEFAULT_VECTOR_DB_RETREIVAL_PROMPT = """
+VECTOR_DB_RETREIVAL_PROMPT = """
 You are a retrieval query condenser for a RAG system.
 Your task is to translate the user’s inputs into 3-5 concrete, retrieval-optimized sentences that reflect how the concept appears in real operational security contexts.
 
@@ -171,16 +225,16 @@ CONTENT GUARDRAILS (MANDATORY)
 INPUTS
 
 The user provided the following original text:
-{{user_provided_text}}
+{user_provided_text}
 Also make sure to use language and key insights from the following context:
-{{vector_search_context}}
+{vector_search_context}
 
-Use cases / key themes to prioritize: {{backgrounds}}
+Use cases / key themes to prioritize: {backgrounds}
 
 ------------------------------------------------------
 OUTPUT
-Provide the following asset: {{asset_type}} using the following structure and formatting rules:
-{{asset_type_rules[asset_type]}}
+Provide the following asset: {asset_type} using the following structure and formatting rules:
+{asset_type_rules[asset_type]}
 
 """
 
