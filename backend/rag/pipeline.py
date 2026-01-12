@@ -1347,7 +1347,8 @@ def build_vector_search_context(retrieved_docs: List[Any]) -> str:
         vector_search_context_text = json.dumps(retrieved_docs, indent=4)
     else:
         # Extract fields from full document objects
-    vector_search_context = []
+        vector_search_context = []
+
     for doc in retrieved_docs:
         if hasattr(doc, 'metadata') and doc.metadata:
             doc_context = {
