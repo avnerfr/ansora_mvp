@@ -540,6 +540,7 @@ def merge_and_filter_duplicate_documents(docs: List[Any], merger_by: str, max_do
 async def build_retrieval_query(
     marketing_text: str,
     backgrounds: List[str],
+    icp: str,
     company_details: Optional[CompanyDetails]
 ) -> str:
     """
@@ -582,9 +583,13 @@ async def build_retrieval_query(
         user_provided_text=marketing_text,
         backgrounds=backgrounds_str,
         company_value_proposition=company_value_proposition,
-        company_domain=company_domain
+        company_domain=company_domain,
+        target_audience= icp 
     )
 
+    logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@retrieval_prompt@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    logger.info(f"retrieval_prompt: {retrieval_prompt}")
+    logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
     retrieval_query = marketing_text
     try:
         openai_api_key = settings.DEEPINFRA_API_KEY
@@ -652,10 +657,6 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
             youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
             podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
             
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-        logger.info(f"reddit_docs: {reddit_docs}")
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-
  
         # For Reddit, use post_id if available, otherwise fall back to url
         # Check if post_id exists in any doc
@@ -665,10 +666,6 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
         reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, merger_field, 10)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-        logger.info(f"reddit_docs: {reddit_docs}")
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-
 
         combined_docs = reddit_filtered_docs + youtube_filtered_docs + podcast_filtered_docs
         combined_docs = sorted(combined_docs, key=lambda x: x.metadata.get('score', 0), reverse=True)
@@ -1677,23 +1674,15 @@ async def process_rag(
         collection_name = get_collection_name(company_details)
 
         # Step 1: Build optimized retrieval query
-        retrieval_query, retrieval_prompt = await build_retrieval_query(marketing_text, backgrounds, company_details)
+        retrieval_query, retrieval_prompt = await build_retrieval_query(marketing_text, backgrounds,icp, company_details)
 
 
         # Step 2: Retrieve documents from vector DB
         external_docs, retrieved_docs = await retrieve_rag_documents(retrieval_query, company_enumerations,collection_name, company_name)
 
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@after retrieve_rag_documents@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-        logger.info(f"retrieved_docs: {retrieved_docs}")
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-
 
         # Step 2.4: Clean documents to reduce token usage before reranking
         cleaned_docs = clean_documents_for_reranking(retrieved_docs)
-
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@after clean_documents_for_reranking @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-        logger.info(f"cleaned_docs: {retrieved_docs}")
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
         # Step 2.5: Rerank and filter cleaned documents
         filtered_docs, rerank_prompt, rerank_result = await rerank_and_filter_documents(

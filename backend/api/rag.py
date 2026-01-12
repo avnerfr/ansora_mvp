@@ -705,7 +705,7 @@ async def process_battle_cards(
                 # The strict company_enumerations filters are too restrictive for competitive intel
                 results = vector_store.search_reddit_posts_minimal_filter(
                     query=query,
-                    k=10,  # Get top 10 results per query
+                    k=5,  # Get top 5 results per query
                     collection_name=collection_name,
                     doc_type='reddit_post'
                 )
@@ -716,7 +716,7 @@ async def process_battle_cards(
                 logger.info(f"  Using standard search (no minimal_filter method)")
                 results = vector_store.search_reddit_posts(
                     query=query,
-                    k=10,
+                    k=5,
                     company_enumerations=company_enumerations,
                     collection_name=collection_name,
                     company_name=company_name
