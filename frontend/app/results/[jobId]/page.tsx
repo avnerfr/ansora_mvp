@@ -543,12 +543,14 @@ export default function ResultsPage() {
                           <p className="text-xs font-medium text-gray-500 mb-2">Context Excerpt:</p>
                           <div className="text-sm text-gray-700 leading-relaxed space-y-1">
                             {(() => {
-                              // Parse text field to extract Pain Phrases, Emotional Triggers, and Implicit Risks
-                              // Format: "Pain Phrases: value1, value2 | Emotional Triggers: value1, value2 | Implicit Risks: value1, value2"
+                              // Parse text field to extract Key Issues, Pain Phrases, Emotional Triggers, Buyer Language, and Implicit Risks
+                              // Format: "Key Issues: value1, value2 | Pain Phrases: value1, value2 | Emotional Triggers: value1, value2 | Buyer Language: value1, value2 | Implicit Risks: value1, value2"
                               const parseTextField = (text: string) => {
                                 const result = {
+                                  keyIssues: [] as string[],
                                   painPhrases: [] as string[],
                                   emotionalTriggers: [] as string[],
+                                  buyerLanguage: [] as string[],
                                   implicitRisks: [] as string[]
                                 };
 
@@ -558,8 +560,15 @@ export default function ResultsPage() {
                                 const sections = text.split(' | ');
                                 
                                 for (const section of sections) {
+                                  // Extract Key Issues
+                                  if (section.startsWith('Key Issues:')) {
+                                    const content = section.replace('Key Issues:', '').trim();
+                                    if (content) {
+                                      result.keyIssues = content.split(',').map(k => k.trim()).filter(k => k);
+                                    }
+                                  }
                                   // Extract Pain Phrases
-                                  if (section.startsWith('Pain Phrases:')) {
+                                  else if (section.startsWith('Pain Phrases:')) {
                                     const content = section.replace('Pain Phrases:', '').trim();
                                     if (content) {
                                       result.painPhrases = content.split(',').map(p => p.trim()).filter(p => p);
@@ -570,6 +579,13 @@ export default function ResultsPage() {
                                     const content = section.replace('Emotional Triggers:', '').trim();
                                     if (content) {
                                       result.emotionalTriggers = content.split(',').map(e => e.trim()).filter(e => e);
+                                    }
+                                  }
+                                  // Extract Buyer Language
+                                  else if (section.startsWith('Buyer Language:')) {
+                                    const content = section.replace('Buyer Language:', '').trim();
+                                    if (content) {
+                                      result.buyerLanguage = content.split(',').map(b => b.trim()).filter(b => b);
                                     }
                                   }
                                   // Extract Implicit Risks
@@ -585,14 +601,19 @@ export default function ResultsPage() {
                               };
 
                               const parsed = parseTextField(source.text || '');
-                              const { painPhrases, emotionalTriggers, implicitRisks } = parsed;
+                              const { keyIssues, painPhrases, emotionalTriggers, buyerLanguage, implicitRisks } = parsed;
 
-                              if (painPhrases.length === 0 && emotionalTriggers.length === 0 && implicitRisks.length === 0) {
+                              if (keyIssues.length === 0 && painPhrases.length === 0 && emotionalTriggers.length === 0 && buyerLanguage.length === 0 && implicitRisks.length === 0) {
                                 return <div>No excerpt available</div>;
                               }
 
                               return (
                                 <>
+                                  {keyIssues.length > 0 && (
+                                    <div>
+                                      <span className="font-bold">Key Issues:</span> {keyIssues.join(', ')}
+                                    </div>
+                                  )}
                                   {painPhrases.length > 0 && (
                                     <div>
                                       <span className="font-bold">Pain Phrases:</span> {painPhrases.join(', ')}
@@ -601,6 +622,11 @@ export default function ResultsPage() {
                                   {emotionalTriggers.length > 0 && (
                                     <div>
                                       <span className="font-bold">Emotional Triggers:</span> {emotionalTriggers.join(', ')}
+                                    </div>
+                                  )}
+                                  {buyerLanguage.length > 0 && (
+                                    <div>
+                                      <span className="font-bold">Buyer Language:</span> {buyerLanguage.join(', ')}
                                     </div>
                                   )}
                                   {implicitRisks.length > 0 && (
