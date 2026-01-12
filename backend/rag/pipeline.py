@@ -1322,7 +1322,10 @@ def clean_documents_for_reranking(retrieved_docs: List[Any]) -> List[Dict[str, A
     # Calculate token savings
     original_size = sum(len(str(doc)) for doc in retrieved_docs)
     cleaned_size = sum(len(str(doc)) for doc in cleaned_docs)
-    logger.info(f"✓ Cleaned {len(cleaned_docs)} documents: {original_size} → {cleaned_size} chars ({100 * (1 - cleaned_size/original_size):.1f}% reduction)")
+    if original_size > 0:
+        logger.info(f"✓ Cleaned {len(cleaned_docs)} documents: {original_size} → {cleaned_size} chars ({100 * (1 - cleaned_size/original_size):.1f}% reduction)")
+    else:
+        logger.info(f"✓ Cleaned {len(cleaned_docs)} documents: 0 → {cleaned_size} chars (0% reduction)")
     
     return cleaned_docs
 
@@ -1344,21 +1347,21 @@ def build_vector_search_context(retrieved_docs: List[Any]) -> str:
         vector_search_context_text = json.dumps(retrieved_docs, indent=4)
     else:
         # Extract fields from full document objects
-        vector_search_context = []
-        for doc in retrieved_docs:
-            if hasattr(doc, 'metadata') and doc.metadata:
-                doc_context = {
-                    "title": doc.metadata.get('title', ''),
-                    "citation": doc.metadata.get('citation', ''),
-                    "key_issues": doc.metadata.get('key_issues', ''),
-                    "pain_phrases": doc.metadata.get('pain_phrases', ''),
-                    "emotional_triggers": doc.metadata.get('emotional_triggers', ''),
-                    "buyer_language": doc.metadata.get('buyer_language', ''),
-                    "implicit_risks": doc.metadata.get('implicit_risks', ''),
-                    "score": doc.metadata.get('score', 0)
-                }
-                vector_search_context.append(doc_context)
-        vector_search_context_text = json.dumps(vector_search_context, indent=4)
+    vector_search_context = []
+    for doc in retrieved_docs:
+        if hasattr(doc, 'metadata') and doc.metadata:
+            doc_context = {
+                "title": doc.metadata.get('title', ''),
+                "citation": doc.metadata.get('citation', ''),
+                "key_issues": doc.metadata.get('key_issues', ''),
+                "pain_phrases": doc.metadata.get('pain_phrases', ''),
+                "emotional_triggers": doc.metadata.get('emotional_triggers', ''),
+                "buyer_language": doc.metadata.get('buyer_language', ''),
+                "implicit_risks": doc.metadata.get('implicit_risks', ''),
+                "score": doc.metadata.get('score', 0)
+            }
+            vector_search_context.append(doc_context)
+    vector_search_context_text = json.dumps(vector_search_context, indent=4)
 
     logger.info(
         f"✓ Vector search context built: {len(vector_search_context_text)} chars from {len(retrieved_docs)} sources"
@@ -1617,7 +1620,7 @@ async def process_rag(
         logger.info(f"Asset Type: {asset_type}")
         logger.info(f"Company Name: {company_name}")
     #    logger.info(f"Company Domain: {json.dumps(company_analysis, indent=4).get('company_domain')}")
-        
+     
         # Log prompt template metadata
         prompt_metadata = get_prompt_metadata_for_logging()
         logger.info(f"Prompt Templates:")

@@ -851,20 +851,38 @@ async def process_battle_cards(
                 
                 # Get citation/URL from metadata
                 citation = metadata.get('citation') or metadata.get('url') or metadata.get('link')
+                doc_type = metadata.get('doc_type', 'reddit_post')
                 
-                source = SourceItem(
-                    filename=title,
-                    title=title,
-                    snippet=snippet,
-                    text=full_text,  # Include full text for expansion
-                    citation=citation,  # Include URL/link
-                    score=float(score) if score else 0.0,
-                    source='reddit',
-                    doc_type=metadata.get('doc_type', 'reddit_post'),
-                    # Include all other relevant metadata fields
-                    channel=metadata.get('channel'),
-                    icp_role_type=metadata.get('icp_role_type')
-                )
+                # Prepare source item with base fields
+                source_data = {
+                    'filename': title,
+                    'title': title,
+                    'snippet': snippet,
+                    'text': full_text,  # Include full text for expansion
+                    'citation': citation,  # Include URL/link
+                    'score': float(score) if score else 0.0,
+                    'source': metadata.get('source', 'reddit'),
+                    'doc_type': doc_type,
+                    'channel': metadata.get('channel'),
+                    'icp_role_type': metadata.get('icp_role_type')
+                }
+                
+                # Add type-specific URL fields for frontend compatibility
+                if doc_type == "reddit_post":
+                    source_data['thread_url'] = citation or metadata.get('url') or ''
+                    source_data['subreddit'] = metadata.get('subreddit', '')
+                    source_data['thread_author'] = metadata.get('thread_author', '')
+                    source_data['selftext'] = metadata.get('selftext', '')
+                elif doc_type == "yt_summary":
+                    video_url = metadata.get('video_url') or metadata.get('url') or citation or ''
+                    source_data['video_url'] = video_url
+                    source_data['citation_start_time'] = metadata.get('citation_start_time', 0)
+                elif doc_type == "podcast_summary":
+                    source_data['episode_url'] = citation or metadata.get('episode_url') or ''
+                    source_data['citation_start_time'] = metadata.get('citation_start_time', 0)
+                    source_data['mp3_url'] = metadata.get('mp3_url', '')
+                
+                source = SourceItem(**source_data)
                 sources.append(source)
                 logger.debug(f"Source {i}: {title[:50]}... (score: {score}, has_text: {bool(full_text)}, has_citation: {bool(citation)})")
             except Exception as e:
