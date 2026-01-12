@@ -677,8 +677,6 @@ async def process_battle_cards(
         # Get company enumerations for better filtering
         # Note: Despite the type hint being List[str], the vectorstore code expects a dict
         company_enumerations = {}
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-        logger.info(f"company name: {company_name}")
         if company_name:
             try:
                 import boto3
@@ -696,8 +694,6 @@ async def process_battle_cards(
                     "execution_surface": [],
                     "failure_type": []
                 }
-        logger.info(f"company enumerations: {company_enumerations}")
-        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
         # Search Qdrant for each query
         all_retrieved_docs = []

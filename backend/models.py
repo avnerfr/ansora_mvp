@@ -113,6 +113,13 @@ class SourceItem(BaseModel):
     channel: Optional[str] = None
     type: Optional[str] = None
     
+    # Marketing insight fields
+    key_issues: Optional[List[str]] = None
+    pain_phrases: Optional[List[str]] = None
+    emotional_triggers: Optional[List[str]] = None
+    buyer_language: Optional[List[str]] = None
+    implicit_risks: Optional[List[str]] = None
+    
     # Podcast-specific fields
     episode_url: Optional[str] = None
     episode_number: Optional[int] = None

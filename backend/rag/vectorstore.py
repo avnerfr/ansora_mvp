@@ -204,7 +204,7 @@ class VectorStore:
             existing_collection_names = [c.name for c in collections]
             logger.debug(f"Found {len(existing_collection_names)} existing collections in Qdrant")
             
-            
+
             # Try to find a match
             for candidate in collection_candidates:
                 if candidate in existing_collection_names:
@@ -321,10 +321,6 @@ class VectorStore:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
             logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}, doc_type={doc_type}, company_name={company_name}, collection={collection_name}")
-            logger.info(f"@@@@@@@@@@@@@@@@@------------@@@@@@@@@@@@@@@")
-            logger.info(f"company name: {company_name}")
-            logger.info(f"company enumerations: {company_enumerations}")
-            logger.info(f"@@@@@@@@@@@@@@@@@------------@@@@@@@@@@@@@@@")
 
             embeddings = self.embeddings  # OpenAI embeddings
             if embeddings is None:

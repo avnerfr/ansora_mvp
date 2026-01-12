@@ -651,7 +651,10 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
             reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
             youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
             podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
-
+            
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+        logger.info(f"reddit_docs: {reddit_docs}")
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
  
         # For Reddit, use post_id if available, otherwise fall back to url
@@ -662,6 +665,9 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
         reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, merger_field, 10)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+        logger.info(f"reddit_docs: {reddit_docs}")
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
 
         combined_docs = reddit_filtered_docs + youtube_filtered_docs + podcast_filtered_docs
@@ -1293,21 +1299,10 @@ def clean_documents_for_reranking(retrieved_docs: List[Any]) -> List[Dict[str, A
     cleaned_docs = []
     for doc in retrieved_docs:
         if hasattr(doc, 'metadata') and doc.metadata:
-            # Extract only the fields we actually use
-            cleaned_doc = {
-                "title": doc.metadata.get('title', ''),
-                "citation": doc.metadata.get('citation', ''),
-                "key_issues": doc.metadata.get('key_issues', ''),
-                "pain_phrases": doc.metadata.get('pain_phrases', ''),
-                "emotional_triggers": doc.metadata.get('emotional_triggers', ''),
-                "buyer_language": doc.metadata.get('buyer_language', ''),
-                "implicit_risks": doc.metadata.get('implicit_risks', ''),
-                "score": doc.metadata.get('score', 0)
-            }
-            cleaned_docs.append(cleaned_doc)
-        elif isinstance(doc, dict):
-            # Handle dict format (already cleaned or from battle cards)
-            metadata = doc.get('metadata', {})
+            metadata = doc.metadata
+            doc_type = metadata.get('doc_type', '')
+            
+            # Extract only the fields we actually use, including URLs
             cleaned_doc = {
                 "title": metadata.get('title', ''),
                 "citation": metadata.get('citation', ''),
@@ -1316,8 +1311,55 @@ def clean_documents_for_reranking(retrieved_docs: List[Any]) -> List[Dict[str, A
                 "emotional_triggers": metadata.get('emotional_triggers', ''),
                 "buyer_language": metadata.get('buyer_language', ''),
                 "implicit_risks": metadata.get('implicit_risks', ''),
-                "score": metadata.get('score', 0)
+                "score": metadata.get('score', 0),
+                "doc_type": doc_type
             }
+            
+            # Add appropriate URL field based on document type
+            if doc_type == "reddit_post":
+                cleaned_doc["url"] = metadata.get('url', '')  # thread_url stored as 'url'
+            elif doc_type == "yt_summary":
+                cleaned_doc["video_url"] = metadata.get('video_url') or metadata.get('url', '')
+            elif doc_type == "podcast_summary":
+                cleaned_doc["episode_url"] = metadata.get('episode_url', '')
+            else:
+                # Fallback: include url if available
+                cleaned_doc["url"] = metadata.get('url', '')
+            
+            cleaned_docs.append(cleaned_doc)
+        elif isinstance(doc, dict):
+            # Handle dict format (already cleaned or from battle cards)
+            # If doc is already a dict, it might be the metadata itself or have a metadata key
+            if 'metadata' in doc:
+                metadata = doc.get('metadata', {})
+            else:
+                metadata = doc  # doc is already the metadata dict
+            
+            doc_type = metadata.get('doc_type', '')
+            
+            cleaned_doc = {
+                "title": metadata.get('title', ''),
+                "citation": metadata.get('citation', ''),
+                "key_issues": metadata.get('key_issues', ''),
+                "pain_phrases": metadata.get('pain_phrases', ''),
+                "emotional_triggers": metadata.get('emotional_triggers', ''),
+                "buyer_language": metadata.get('buyer_language', ''),
+                "implicit_risks": metadata.get('implicit_risks', ''),
+                "score": metadata.get('score', 0),
+                "doc_type": doc_type
+            }
+            
+            # Add appropriate URL field based on document type
+            if doc_type == "reddit_post":
+                cleaned_doc["url"] = metadata.get('url', '')
+            elif doc_type == "yt_summary":
+                cleaned_doc["video_url"] = metadata.get('video_url') or metadata.get('url', '')
+            elif doc_type == "podcast_summary":
+                cleaned_doc["episode_url"] = metadata.get('episode_url', '')
+            else:
+                # Fallback: include url if available
+                cleaned_doc["url"] = metadata.get('url', '')
+            
             cleaned_docs.append(cleaned_doc)
     
     # Calculate token savings
@@ -1641,8 +1683,17 @@ async def process_rag(
         # Step 2: Retrieve documents from vector DB
         external_docs, retrieved_docs = await retrieve_rag_documents(retrieval_query, company_enumerations,collection_name, company_name)
 
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@after retrieve_rag_documents@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+        logger.info(f"retrieved_docs: {retrieved_docs}")
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+
+
         # Step 2.4: Clean documents to reduce token usage before reranking
         cleaned_docs = clean_documents_for_reranking(retrieved_docs)
+
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@after clean_documents_for_reranking @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+        logger.info(f"cleaned_docs: {retrieved_docs}")
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
         # Step 2.5: Rerank and filter cleaned documents
         filtered_docs, rerank_prompt, rerank_result = await rerank_and_filter_documents(
