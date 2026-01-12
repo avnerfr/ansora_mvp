@@ -1,7 +1,16 @@
 from importlib import import_module
 from dotenv import load_dotenv
 import os
+import sys
+import logging
 from pathlib import Path
+
+# Configure logging at app startup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 
 # Load environment variables from .env file in backend directory
 backend_dir = Path(__file__).parent

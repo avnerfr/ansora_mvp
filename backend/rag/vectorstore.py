@@ -196,7 +196,7 @@ class VectorStore:
         collection_candidates = [x for x in collection_candidates if not (x in seen or seen.add(x))]
         
         logger.info(f"Checking {len(collection_candidates)} possible collection names for domain '{domain}'")
-        logger.debug(f"Collection candidates: {collection_candidates[:5]}...")  # Log first 5
+        logger.info(f"Collection candidates: {collection_candidates[:5]}...")  # Log first 5
         
         try:
             # Get all existing collections from Qdrant
