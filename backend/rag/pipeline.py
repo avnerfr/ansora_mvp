@@ -643,6 +643,7 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
             else:
                 retrieval_query_chunks.append(line) 
 
+
         for chunk in retrieval_query_chunks:
             logger.info(f"-------------------Searching for chunk------------------------")
             logger.info(f"{chunk}")

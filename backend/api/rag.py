@@ -677,6 +677,8 @@ async def process_battle_cards(
         # Get company enumerations for better filtering
         # Note: Despite the type hint being List[str], the vectorstore code expects a dict
         company_enumerations = {}
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+        logger.info(f"company name: {company_name}")
         if company_name:
             try:
                 import boto3
@@ -694,7 +696,9 @@ async def process_battle_cards(
                     "execution_surface": [],
                     "failure_type": []
                 }
-        
+        logger.info(f"company enumerations: {company_enumerations}")
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+
         # Search Qdrant for each query
         all_retrieved_docs = []
         
@@ -840,51 +844,90 @@ async def process_battle_cards(
                 # Get filename/title from metadata
                 title = metadata.get('title', f'Reddit Post {i}')
                 
-                # Get full text content
-                full_text = doc.page_content if hasattr(doc, 'page_content') else ''
+                # Get URL from metadata (same as standard pipeline)
+                doc_url = metadata.get('url', '')
                 
-                # Get snippet (first 200 chars)
-                snippet = full_text[:200] if full_text else 'No content available'
+                # Get citation (text excerpt, not URL)
+                citation = metadata.get('citation', '')
                 
                 # Get score from metadata
                 score = metadata.get('score', 0.0)
-                
-                # Get citation/URL from metadata
-                citation = metadata.get('citation') or metadata.get('url') or metadata.get('link')
                 doc_type = metadata.get('doc_type', 'reddit_post')
+                source = metadata.get('source', 'reddit')
                 
-                # Prepare source item with base fields
+                # Extract fields in the same format as standard pipeline
+                # Ensure these fields are always lists/arrays, not strings
+                key_issues = metadata.get('key_issues', [])
+                if not isinstance(key_issues, list):
+                    key_issues = [key_issues] if key_issues and str(key_issues).strip() else []
+                pain_phrases = metadata.get('pain_phrases', [])
+                if not isinstance(pain_phrases, list):
+                    pain_phrases = [pain_phrases] if pain_phrases and str(pain_phrases).strip() else []
+                emotional_triggers = metadata.get('emotional_triggers', [])
+                if not isinstance(emotional_triggers, list):
+                    emotional_triggers = [emotional_triggers] if emotional_triggers and str(emotional_triggers).strip() else []
+                buyer_language = metadata.get('buyer_language', [])
+                if not isinstance(buyer_language, list):
+                    buyer_language = [buyer_language] if buyer_language and str(buyer_language).strip() else []
+                implicit_risks = metadata.get('implicit_risks', [])
+                if not isinstance(implicit_risks, list):
+                    implicit_risks = [implicit_risks] if implicit_risks and str(implicit_risks).strip() else []
+                
+                # Create comprehensive context excerpt from RAG metadata (same as standard pipeline)
+                context_parts = []
+                if key_issues and (isinstance(key_issues, list) and key_issues or str(key_issues).strip()):
+                    context_parts.append(f"Key Issues: {', '.join(key_issues) if isinstance(key_issues, list) else str(key_issues)}")
+                if pain_phrases and (isinstance(pain_phrases, list) and pain_phrases or str(pain_phrases).strip()):
+                    context_parts.append(f"Pain Phrases: {', '.join(pain_phrases) if isinstance(pain_phrases, list) else str(pain_phrases)}")
+                if emotional_triggers and (isinstance(emotional_triggers, list) and emotional_triggers or str(emotional_triggers).strip()):
+                    context_parts.append(f"Emotional Triggers: {', '.join(emotional_triggers) if isinstance(emotional_triggers, list) else str(emotional_triggers)}")
+                if buyer_language and (isinstance(buyer_language, list) and buyer_language or str(buyer_language).strip()):
+                    context_parts.append(f"Buyer Language: {', '.join(buyer_language) if isinstance(buyer_language, list) else str(buyer_language)}")
+                if implicit_risks and (isinstance(implicit_risks, list) and implicit_risks or str(implicit_risks).strip()):
+                    context_parts.append(f"Implicit Risks: {', '.join(implicit_risks) if isinstance(implicit_risks, list) else str(implicit_risks)}")
+                
+                context_excerpt = " | ".join(context_parts) if context_parts else (citation[:500] if citation else "No context available")
+                
+                # Prepare source item with base fields (same format as standard pipeline)
                 source_data = {
                     'filename': title,
                     'title': title,
-                    'snippet': snippet,
-                    'text': full_text,  # Include full text for expansion
-                    'citation': citation,  # Include URL/link
+                    'snippet': context_excerpt,  # Use context_excerpt like standard pipeline
+                    'text': context_excerpt,  # Set text field to context_excerpt so frontend can parse it consistently
+                    'citation': citation,
                     'score': float(score) if score else 0.0,
-                    'source': metadata.get('source', 'reddit'),
+                    'source': source,
                     'doc_type': doc_type,
+                    'key_issues': key_issues,
+                    'pain_phrases': pain_phrases,
+                    'emotional_triggers': emotional_triggers,
+                    'buyer_language': buyer_language,
+                    'implicit_risks': implicit_risks,
                     'channel': metadata.get('channel'),
                     'icp_role_type': metadata.get('icp_role_type')
                 }
                 
-                # Add type-specific URL fields for frontend compatibility
+                # Add type-specific URL fields for frontend compatibility (same as standard pipeline)
                 if doc_type == "reddit_post":
-                    source_data['thread_url'] = citation or metadata.get('url') or ''
+                    source_data['thread_url'] = doc_url  # Use doc_url directly, same as standard pipeline
                     source_data['subreddit'] = metadata.get('subreddit', '')
                     source_data['thread_author'] = metadata.get('thread_author', '')
                     source_data['selftext'] = metadata.get('selftext', '')
                 elif doc_type == "yt_summary":
-                    video_url = metadata.get('video_url') or metadata.get('url') or citation or ''
+                    # Use same logic as standard pipeline
+                    video_url = metadata.get('video_url') or metadata.get('url') or doc_url or ''
                     source_data['video_url'] = video_url
                     source_data['citation_start_time'] = metadata.get('citation_start_time', 0)
                 elif doc_type == "podcast_summary":
-                    source_data['episode_url'] = citation or metadata.get('episode_url') or ''
+                    # Use same logic as standard pipeline
+                    episode_url = metadata.get('episode_url', '')
+                    source_data['episode_url'] = episode_url
                     source_data['citation_start_time'] = metadata.get('citation_start_time', 0)
                     source_data['mp3_url'] = metadata.get('mp3_url', '')
                 
                 source = SourceItem(**source_data)
                 sources.append(source)
-                logger.debug(f"Source {i}: {title[:50]}... (score: {score}, has_text: {bool(full_text)}, has_citation: {bool(citation)})")
+                logger.debug(f"Source {i}: {title[:50]}... (score: {score}, has_text: {bool(context_excerpt)}, has_citation: {bool(citation)})")
             except Exception as e:
                 logger.warning(f"Could not create SourceItem {i}: {e}")
         

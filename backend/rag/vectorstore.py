@@ -204,6 +204,7 @@ class VectorStore:
             existing_collection_names = [c.name for c in collections]
             logger.debug(f"Found {len(existing_collection_names)} existing collections in Qdrant")
             
+            
             # Try to find a match
             for candidate in collection_candidates:
                 if candidate in existing_collection_names:
@@ -320,6 +321,10 @@ class VectorStore:
         """Search marketing summaries from the shared cloud Qdrant collection."""
         try:
             logger.info(f"🔍 Searching summaries in cloud Qdrant, k={k}, doc_type={doc_type}, company_name={company_name}, collection={collection_name}")
+            logger.info(f"@@@@@@@@@@@@@@@@@------------@@@@@@@@@@@@@@@")
+            logger.info(f"company name: {company_name}")
+            logger.info(f"company enumerations: {company_enumerations}")
+            logger.info(f"@@@@@@@@@@@@@@@@@------------@@@@@@@@@@@@@@@")
 
             embeddings = self.embeddings  # OpenAI embeddings
             if embeddings is None:
@@ -334,6 +339,10 @@ class VectorStore:
             )
             query_vector = response.data[0].embedding
             logger.info(f"###########  After reload must remove the security_control_surface from the code ###########")
+            logger.info(f"company domain: {company_enumerations.get("domain", [])}")
+            logger.info(f"company operational_surface: {company_enumerations.get("operational_surface", [])}")
+            logger.info(f"company execution_surface: {company_enumerations.get("execution_surface", [])}")
+            logger.info(f"company failure_type: {company_enumerations.get("failure_type", [])}")
 
             search_results_old = self.client.query_points(
                 collection_name=collection_name,
@@ -341,8 +350,7 @@ class VectorStore:
                 limit=k,
                 with_payload=True,
                 with_vectors=False,
-
-                query_filter=Filter(
+               query_filter=Filter(
                     must=[FieldCondition(key="doc_type", match=MatchValue(value=doc_type)),
                         FieldCondition(key="domain", match=MatchAny(any=company_enumerations.get("domain", []))),
                         FieldCondition(key="operational_surface", match=MatchAny(any=company_enumerations.get("operational_surface", []))),
