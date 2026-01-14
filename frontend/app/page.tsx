@@ -413,9 +413,19 @@ function HomePageContent() {
       return
     }
 
+    // For admins, ensure company is selected
+    if (isAdminUser && !selectedCompany.trim()) {
+      alert('Please select a company')
+      setShowCompanyDialog(true)
+      return
+    }
+
     setIsGettingRecommendations(true)
     try {
-      const response = await ragAPI.getRecommendations(originalAsset)
+      const response = await ragAPI.getRecommendations(
+        originalAsset,
+        isAdminUser ? selectedCompany : undefined
+      )
       setModifiedAsset(response.modified_asset || response.recommended_text || '')
     } catch (error: any) {
       console.error('Error getting recommendations:', error)

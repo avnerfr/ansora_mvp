@@ -157,9 +157,10 @@ export const ragAPI = {
     })
     return response.data
   },
-  getRecommendations: async (originalAsset: string) => {
+  getRecommendations: async (originalAsset: string, company?: string) => {
     const response = await apiClient.post('/rag/recommendations', {
       original_asset: originalAsset,
+      company: company,
     })
     return response.data
   },

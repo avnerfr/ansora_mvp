@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 from rag.vectorstore import vector_store
 from rag import s3_utils
-from rag.s3_utils import CompanyDetails
+from rag.s3_utils import CompanyDetails, get_company_enumerations
 from core.config import settings
 from typing import List, Dict, Any, Optional
 import logging
@@ -1587,15 +1587,6 @@ async def generate_llm_response(prompt: str) -> str:
     logger.debug("=================================================================================")
     logger.info("✓ Response generated")
     return refined_text
-
-def get_company_enumerations(company_name: str) -> List[str]:
-    """Get company enumerations from S3 bucket."""
-    s3 = boto3.client('s3')
-    key = company_name.lower()+'_enumerations.json'
-    logger.info(f"Reading company enumerations from S3: {key}")
-    response = s3.get_object(Bucket='ansora-company-enumerations', Key=key)
-    return json.loads(response['Body'].read().decode('utf-8'))
-
 
 def get_collection_name(company_details: Optional[CompanyDetails]) -> str:
     """Get collection name from CompanyDetails object, resolving all possible variations."""

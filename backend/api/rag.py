@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import uuid
 from datetime import datetime
 import logging
@@ -21,7 +21,7 @@ from core.auth import get_current_user, get_cognito_groups_from_token
 from rag.pipeline import process_rag, _load_asset_type_rules_from_dynamodb
 from rag.loader import load_document
 from rag.agents import company_analysis_agent
-from rag.s3_utils import get_latest_company_file, save_company_file, get_company_website
+from rag.s3_utils import get_latest_company_file, save_company_file, get_company_website, get_company_enumerations
 from rag.dynamodb_prompts import get_latest_prompt_template
 import re
 from core.config import settings
@@ -220,6 +220,18 @@ async def process_marketing_material(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one background must be selected"
         )
+
+    # Administrators must explicitly select a company in the request
+    token = credentials.credentials
+    groups = get_cognito_groups_from_token(token)
+    is_administrator = 'Administrators' in groups
+    if is_administrator and not request.company:
+        logger.warning("Validation error: Administrator user did not provide company in request")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Company must be specified for administrator users"
+        )
+
     company_details = s3_utils.get_company_data_from_credentials(credentials.credentials, request.company)
     logger.info(
         f"Request validated - Backgrounds: {request.backgrounds}, "
@@ -565,6 +577,14 @@ async def process_battle_cards(
     groups = get_cognito_groups_from_token(token)
     is_administrator = 'Administrators' in groups
     logger.info(f"User is administrator: {is_administrator}")
+
+    # Administrators must explicitly select a company in the request
+    if is_administrator and not request.company:
+        logger.warning("Validation error: Administrator user did not provide company in request")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Company must be specified for administrator users"
+        )
     
     # Determine company name
     company_name = None
@@ -1044,6 +1064,7 @@ END OF TECHNICAL DETAILS
 # Request/Response models for recommendations
 class RecommendationsRequest(BaseModel):
     original_asset: str
+    company: Optional[str] = None  # Company name (for administrators)
 
 
 class RecommendationsResponse(BaseModel):
@@ -1061,7 +1082,7 @@ async def get_recommendations(
     1. Run LLM model using asset_assistant_phrase_extraction_template from DynamoDB
     2. Extract pain signals from JSON response
     3. Search Qdrant pain_phrases collection for each source_snippet
-    4. Replace source_snippet with embedded_text in the original asset
+    4. Replace source_snippet with embedded_chunk in the original asset
     """
     logger.info(f"Asset Assistant request from user: {current_user.email} (ID: {current_user.id})")
     
@@ -1070,9 +1091,21 @@ async def get_recommendations(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Original asset text is required"
         )
+
+    # Administrators must explicitly select a company in the request
+    token = credentials.credentials
+    groups = get_cognito_groups_from_token(token)
+    is_administrator = 'Administrators' in groups
+    if is_administrator and not request.company:
+        logger.warning("Validation error: Administrator user did not provide company in request")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Company must be specified for administrator users"
+        )
     
     try:
         # Step 1: Get company details
+
         company_details = s3_utils.get_company_data_from_credentials(credentials.credentials, request.company)
 
         # Step 2: Load prompt template from DynamoDB
@@ -1128,6 +1161,7 @@ async def get_recommendations(
                     json_str = llm_result
             
             extraction_result = json.loads(json_str)
+            extraction_result = extraction_result.get('phrases')
             logger.info(f"✓ Parsed JSON response")
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse LLM response as JSON: {e}")
@@ -1157,23 +1191,26 @@ async def get_recommendations(
         from rag.vectorstore import vector_store
         collection_name = None
         if domain:
-            collection_name = vector_store.resolve_collection_name(domain, "pain_phrases")
+            collection_name = vector_store.resolve_collection_name(domain, "buyer_language_1_0")
             logger.info(f"Resolved collection name: {collection_name} for domain: {domain}")
         else:
             # Try common collection names
             collections = vector_store.client.get_collections().collections
             collection_names = [c.name for c in collections]
             # Look for pain_phrases collections
-            pain_collections = [c for c in collection_names if 'pain_phrases' in c.lower()]
+            pain_collections = [c for c in collection_names if 'buyer_language_1_0' in c.lower()]
             if pain_collections:
                 collection_name = pain_collections[0]  # Use first found
-                logger.info(f"Using pain_phrases collection: {collection_name}")
+                logger.info(f"Using buyer_language_1_0 collection: {collection_name}")
             else:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="No pain_phrases collection found in Qdrant. Please ensure company domain is configured."
+                    detail="No buyer_language_1_0 collection found in Qdrant. Please ensure company domain is configured."
                 )
-        
+        company_enumerations = get_company_enumerations(company_details.company_name)
+        #retreive result from Vector Store for each pain signal and append to the json object
+
+
         # Process each item in the extraction result
         # Expected format: list of items with "classification" and "source_snippet"
         items = extraction_result
@@ -1183,11 +1220,11 @@ async def get_recommendations(
         elif not isinstance(extraction_result, list):
             items = [extraction_result]
         
-        # Build replacement map: source_snippet -> embedded_text
+        # Build replacement map: source_snippet -> embedded_chunk
         replacement_map = {}
         modified_asset = request.original_asset
-        
-        for item in items:
+        logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+        for item in extraction_result:
             if not isinstance(item, dict):
                 continue
                 
@@ -1213,38 +1250,42 @@ async def get_recommendations(
             
             # Search Qdrant
             try:
-                search_results = vector_store.client.query_points(
-                    collection_name=collection_name,
-                    query=query_vector,
-                    limit=1,  # Get top match
-                    with_payload=True,
-                    with_vectors=False
-                )
+                # use search_doc_type() to retreive documents
+                # Note: search_doc_type returns a list of points, not a Qdrant response object
+                search_results = vector_store.search_doc_type(source_snippet, 1, "reddit_post", company_enumerations, collection_name, company_details.company_name)
                 
-                if search_results.points and len(search_results.points) > 0:
-                    top_match = search_results.points[0]
-                    embedded_text = top_match.payload.get('embedded_text', '')
+                logger.info(f"source_snippet: {source_snippet}")
+                logger.info(f"Search results: {len(search_results) if isinstance(search_results, list) else 'N/A'} points")
+                logger.info("================================================")
+                if search_results and len(search_results) > 0:
+                    top_match = search_results[0]
+                    logger.info(f">>>>>>>Top match: {top_match}")
+                    # embedded_chunk can be embeded_chunk or embeded_chunk
+                    embedded_chunk = top_match.payload.get('embeded_chunk', '') if hasattr(top_match, 'payload') else ''
+                    if not embedded_chunk:
+                        embedded_chunk = top_match.payload.get('embedded_chunk', '') if hasattr(top_match, 'payload') else ''
+
                     
-                    if embedded_text:
-                        replacement_map[source_snippet] = embedded_text
-                        logger.info(f"✓ Found replacement: '{source_snippet[:30]}...' -> '{embedded_text[:30]}...'")
+                    if embedded_chunk:
+                        replacement_map[source_snippet] = embedded_chunk
+                        logger.info(f"✓ Found replacement: '{source_snippet[:30]}...' -> '{embedded_chunk[:30]}...'")
                     else:
-                        logger.warning(f"No embedded_text found in payload for: {source_snippet[:50]}")
+                        logger.warning(f"No embedded_chunk found in payload for: {source_snippet[:50]}")
                 else:
                     logger.warning(f"No matches found in Qdrant for: {source_snippet[:50]}")
             except Exception as e:
                 logger.error(f"Error searching Qdrant for '{source_snippet[:50]}': {e}", exc_info=True)
         
-        # Step 6: Replace source_snippets with embedded_text in the original asset
+        # Step 6: Replace source_snippets with embedded_chunk in the original asset
         logger.info(f"Replacing {len(replacement_map)} pain phrases in original asset...")
         
         # Sort replacements by length (longest first) to avoid partial replacements
         sorted_replacements = sorted(replacement_map.items(), key=lambda x: len(x[0]), reverse=True)
         
-        for source_snippet, embedded_text in sorted_replacements:
+        for source_snippet, embedded_chunk in sorted_replacements:
             # Replace all occurrences
-            modified_asset = modified_asset.replace(source_snippet, embedded_text)
-            logger.debug(f"Replaced: '{source_snippet[:30]}...' with '{embedded_text[:30]}...'")
+            modified_asset = modified_asset.replace(source_snippet, embedded_chunk)
+            logger.debug(f"Replaced: '{source_snippet[:30]}...' with '{embedded_chunk[:30]}...'")
         
         logger.info(f"✓ Asset Assistant pipeline completed successfully")
         return RecommendationsResponse(modified_asset=modified_asset)

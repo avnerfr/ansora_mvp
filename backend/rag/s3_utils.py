@@ -275,6 +275,15 @@ def get_company_website(company_name: str) -> str:
     return f"https://{normalized}.com"
 
 
+def get_company_enumerations(company_name: str) -> List[str]:
+    """Get company enumerations from S3 bucket."""
+    s3 = get_s3_client()
+    key = company_name.lower() + '_enumerations.json'
+    logger.info(f"Reading company enumerations from S3: {key}")
+    response = s3.get_object(Bucket='ansora-company-enumerations', Key=key)
+    return json.loads(response['Body'].read().decode('utf-8'))
+
+
 def get_company_data_from_credentials(token, company: str) -> CompanyDetails:
     """
     Get company data from credentials.
@@ -286,26 +295,36 @@ def get_company_data_from_credentials(token, company: str) -> CompanyDetails:
         CompanyDetails object
     """
 
-    groups = get_cognito_groups_from_token(token, company)
+    groups = get_cognito_groups_from_token(token)
     is_administrator = 'Administrators' in groups
     logger.info(f"User is administrator: {is_administrator}")
 
     logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")    
     # Determine company name
     company_name = None
-    if company:
-        # Administrator selected company from dropdown
-        company_name = company
-        logger.info(f"Using company from request (admin): {company_name}")
-    else:
-        # Get company from Cognito groups (non-admin users)
-        # Filter out Administrators group
-        company_groups = [g for g in groups if g != 'Administrators']
-        if company_groups:
-            company_name = company_groups[0]  # Use first non-admin group
-            logger.info(f"Using company from Cognito groups: {company_name}")
+    if is_administrator:
+        # For administrators, company MUST come from the request (dialog), not from Cognito
+        if company:
+            company_name = company
+            logger.info(f"Administrator: Using company from request (dialog): {company_name}")
         else:
-            logger.warning("No company found in Cognito groups and no company in request")
+            # This should not happen if validation is correct, but log warning
+            logger.warning("Administrator user but no company provided in request")
+    else:
+        # For non-admin users, get company from Cognito groups
+        if company:
+            # Non-admin user provided company in request (shouldn't normally happen, but allow it)
+            company_name = company
+            logger.info(f"Non-admin user: Using company from request: {company_name}")
+        else:
+            # Get company from Cognito groups (non-admin users)
+            # Filter out Administrators group
+            company_groups = [g for g in groups if g != 'Administrators']
+            if company_groups:
+                company_name = company_groups[0]  # Use first non-admin group
+                logger.info(f"Non-admin user: Using company from Cognito groups: {company_name}")
+            else:
+                logger.warning("No company found in Cognito groups and no company in request")
     logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
     
     # Get or generate company information

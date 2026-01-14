@@ -335,10 +335,7 @@ class VectorStore:
             )
             query_vector = response.data[0].embedding
             logger.info(f"###########  After reload must remove the security_control_surface from the code ###########")
-            logger.info(f"company domain: {company_enumerations.get("domain", [])}")
-            logger.info(f"company operational_surface: {company_enumerations.get("operational_surface", [])}")
-            logger.info(f"company execution_surface: {company_enumerations.get("execution_surface", [])}")
-            logger.info(f"company failure_type: {company_enumerations.get("failure_type", [])}")
+
 
             search_results_old = self.client.query_points(
                 collection_name=collection_name,
