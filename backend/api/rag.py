@@ -8,6 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 import json
+import rag.s3_utils as s3_utils
 
 from db import get_db
 from models import (
@@ -15,8 +16,9 @@ from models import (
     RAGProcessRequest, RAGProcessResponse,
     RAGResultResponse, SourceItem, PromptTemplateRequest, PromptTemplateResponse
 )
+from pydantic import BaseModel
 from core.auth import get_current_user, get_cognito_groups_from_token
-from rag.pipeline import process_rag, DEFAULT_TEMPLATE, _load_asset_type_rules_from_dynamodb
+from rag.pipeline import process_rag, _load_asset_type_rules_from_dynamodb
 from rag.loader import load_document
 from rag.agents import company_analysis_agent
 from rag.s3_utils import get_latest_company_file, save_company_file, get_company_website
@@ -61,21 +63,52 @@ async def get_prompt_template(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get user's prompt template or default."""
+    """Get user's prompt template or from DynamoDB."""
     template_record = db.query(PromptTemplate).filter(PromptTemplate.user_id == current_user.id).first()
     
     if template_record:
         return PromptTemplateResponse(template=template_record.template)
     else:
-        return PromptTemplateResponse(template=DEFAULT_TEMPLATE)
+        # Try to get template from DynamoDB
+        try:
+            dynamodb_template_data = get_latest_prompt_template('asset_creation_template')
+            if dynamodb_template_data and dynamodb_template_data.get('template_body'):
+                return PromptTemplateResponse(template=dynamodb_template_data['template_body'])
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Prompt template not found. Please ensure 'asset_creation_template' exists in DynamoDB."
+                )
+        except Exception as e:
+            logger.error(f"Error retrieving template from DynamoDB: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error retrieving prompt template from DynamoDB: {str(e)}"
+            )
 
 
 @router.get("/prompt-template/default", response_model=PromptTemplateResponse)
 async def get_default_prompt_template(
     current_user: User = Depends(get_current_user),
 ):
-    """Get the default prompt template from prompts.py."""
-    return PromptTemplateResponse(template=DEFAULT_TEMPLATE)
+    """Get the prompt template from DynamoDB (no default exists)."""
+    try:
+        dynamodb_template_data = get_latest_prompt_template('asset_creation_template')
+        if dynamodb_template_data and dynamodb_template_data.get('template_body'):
+            return PromptTemplateResponse(template=dynamodb_template_data['template_body'])
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Prompt template not found. Please ensure 'asset_creation_template' exists in DynamoDB."
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving template from DynamoDB: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error retrieving prompt template from DynamoDB: {str(e)}"
+        )
 
 
 def _guess_file_type(filename: str) -> str:
@@ -187,77 +220,46 @@ async def process_marketing_material(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one background must be selected"
         )
-    
-    # Check if user is administrator
-    token = credentials.credentials
-    groups = get_cognito_groups_from_token(token)
-    is_administrator = 'Administrators' in groups
-    logger.info(f"User is administrator: {is_administrator}")
-    
-    # Determine company name
-    company_name = None
-    if request.company:
-        # Administrator selected company from dropdown
-        company_name = request.company
-        logger.info(f"Using company from request (admin): {company_name}")
-    else:
-        # Get company from Cognito groups (non-admin users)
-        # Filter out Administrators group
-        company_groups = [g for g in groups if g != 'Administrators']
-        if company_groups:
-            company_name = company_groups[0]  # Use first non-admin group
-            logger.info(f"Using company from Cognito groups: {company_name}")
-        else:
-            logger.warning("No company found in Cognito groups and no company in request")
-    
-    # Get or generate company information
-    company_details = None
-    company_analysis = None
-     
-    if company_name:
-        # Check S3 for existing company information (returns CompanyDetails object)
-        company_details = get_latest_company_file(company_name)
-        
-        if company_details:
-            # We have a CompanyDetails object - extract company_analysis string if needed for pipeline
-            # For now, we'll pass the CompanyDetails object to the pipeline
-            logger.info(f"Using existing company details for {company_name}")
-        else:
-            # Generate new company information
-            logger.info(f"Generating new company information for {company_name}")
-            company_website = get_company_website(company_name)
-            try:
-                company_analysis = company_analysis_agent(company_name, company_website)
-           
-                # Save to S3
-                save_company_file(company_name, company_analysis)
-                logger.info(f"Saved company information to S3 for {company_name}")
-                
-                # Load the newly saved file as CompanyDetails
-                company_details = get_latest_company_file(company_name)
-            except Exception as e:
-                logger.error(f"Error generating company information: {e}")
-                # Continue without company information rather than failing
-    
+    company_details = s3_utils.get_company_data_from_credentials(credentials.credentials, request.company)
     logger.info(
         f"Request validated - Backgrounds: {request.backgrounds}, "
         f"Text length: {len(request.marketing_text)}, "
         f"Asset Type: {request.asset_type}, ICP: {request.icp}, "
-        f"Company: {company_name}"
+        f"Company: {company_details.company_name}"
     )
-    
+   
     # Get user's template or use override
+    # Priority: 1. template_override, 2. user's custom template, 3. DynamoDB template (required)
     template = request.template_override
-    logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
-    logger.info(f"template : {template}")
-    logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+ 
     if not template:
         template_record = db.query(PromptTemplate).filter(PromptTemplate.user_id == current_user.id).first()
-        template = template_record.template if template_record else DEFAULT_TEMPLATE
-        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
-        logger.info(f"template_record : {template_record}")
-        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
-        logger.info(f"Using {'custom' if template_record else 'default'} template")
+        if template_record:
+            template = template_record.template
+            logger.info("Using custom template from database")
+        else:
+            # Get template from DynamoDB (required, no fallback)
+            try:
+                dynamodb_template_data = get_latest_prompt_template('asset_creation_template')
+                if dynamodb_template_data and dynamodb_template_data.get('template_body'):
+                    template = dynamodb_template_data['template_body']
+                    logger.info(f"Using template from DynamoDB (edited by: {dynamodb_template_data.get('edited_by_sub', 'unknown')} on {dynamodb_template_data.get('edited_at_iso', 'unknown')})")
+                else:
+                    error_msg = "Required prompt template 'asset_creation_template' not found in DynamoDB"
+                    logger.error(error_msg)
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=error_msg
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                error_msg = f"Error retrieving template from DynamoDB: {str(e)}"
+                logger.error(error_msg)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=error_msg
+                )
     else:
         logger.info("Using template override from request")
     
@@ -266,17 +268,7 @@ async def process_marketing_material(
         import traceback
         logger.info(f"[Request {request_id}] Calling RAG pipeline...")
         logger.debug(f"[Request {request_id}] Call stack: {''.join(traceback.format_stack()[-3:-1])}")
-        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
-        logger.info(f"current_user.id, : {current_user.id,}")
-        logger.info(f"backgrounds : {request.backgrounds}")
-        logger.info(f"marketing_text : {request.marketing_text}")
-        logger.info(f"asset_type : {request.asset_type}")
-        logger.info(f"icp : {request.icp}")
-        logger.info(f"template : {template}")
-        logger.info(f"company_name : {company_name}")
-        logger.info(f"company_details : {company_details}")
-        logger.info(f"is_administrator : {is_administrator}")
-        logger.info(f"&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+
         refined_text, sources, retrieved_docs, final_prompt, email_content = await process_rag(
             user_id=current_user.id,
             backgrounds=request.backgrounds,
@@ -1047,4 +1039,222 @@ END OF TECHNICAL DETAILS
     
     logger.info(f"✓ Battle cards request completed successfully - job_id: {job_id}")
     return RAGProcessResponse(job_id=job_id)
+
+
+# Request/Response models for recommendations
+class RecommendationsRequest(BaseModel):
+    original_asset: str
+
+
+class RecommendationsResponse(BaseModel):
+    modified_asset: str
+
+
+@router.post("/recommendations", response_model=RecommendationsResponse)
+async def get_recommendations(
+    request: RecommendationsRequest,
+    current_user: User = Depends(get_current_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+):
+    """
+    Asset Assistant pipeline:
+    1. Run LLM model using asset_assistant_phrase_extraction_template from DynamoDB
+    2. Extract pain signals from JSON response
+    3. Search Qdrant pain_phrases collection for each source_snippet
+    4. Replace source_snippet with embedded_text in the original asset
+    """
+    logger.info(f"Asset Assistant request from user: {current_user.email} (ID: {current_user.id})")
+    
+    if not request.original_asset or not request.original_asset.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Original asset text is required"
+        )
+    
+    try:
+        # Step 1: Get company details
+        company_details = s3_utils.get_company_data_from_credentials(credentials.credentials, request.company)
+
+        # Step 2: Load prompt template from DynamoDB
+        logger.info("Loading asset_assistant_phrase_extraction_template from DynamoDB...")
+        template_data = get_latest_prompt_template('asset_assistant_phrase_extraction_template')
+        
+        if not template_data or not template_data.get('template_body'):
+            error_msg = "Required prompt 'asset_assistant_phrase_extraction_template' not found in DynamoDB"
+            logger.error(f"✗ {error_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+        
+        prompt_template = template_data['template_body']
+        logger.info(f"✓ Loaded prompt template (edited by: {template_data.get('edited_by_sub', 'unknown')} on {template_data.get('edited_at_iso', 'unknown')})")
+        
+        # Format prompt with original asset - use replace instead of format to avoid issues with curly braces in JSON examples
+        formatted_prompt = prompt_template.replace('{storyline_text}', request.original_asset)
+        
+        # Step 3: Call LLM to extract pain signals
+        logger.info("Calling LLM to extract pain signals...")
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+        
+        llm = ChatOpenAI(
+            model_name="deepseek-ai/DeepSeek-V3.2",
+            openai_api_key=settings.DEEPINFRA_API_KEY,
+            base_url=settings.DEEPINFRA_API_BASE_URL,
+            temperature=0.7,
+        )
+        
+        messages = [HumanMessage(content=formatted_prompt)]
+        llm_response = await llm.ainvoke(messages)
+        llm_result = llm_response.content.strip()
+        
+        logger.info(f"✓ LLM response received: {len(llm_result)} chars")
+        logger.info(f"LLM response: {llm_result}")
+        
+        # Step 4: Parse JSON response
+        try:
+            # Try to extract JSON from the response (might be wrapped in markdown code blocks)
+            import re
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', llm_result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+            else:
+                # Try to find JSON object directly
+                json_match = re.search(r'\{.*\}', llm_result, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(0)
+                else:
+                    json_str = llm_result
+            
+            extraction_result = json.loads(json_str)
+            logger.info(f"✓ Parsed JSON response")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
+            logger.error(f"Response was: {llm_result}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"LLM did not return valid JSON. Response: {llm_result[:500]}"
+            )
+        
+        # Step 5: Extract pain signals and search Qdrant
+        logger.info("Processing pain signals and searching Qdrant...")
+        
+        # Get domain for collection name
+        domain = None
+        if company_details and company_details.company_context:
+            domain = company_details.company_context.company_domain
+        else:
+            logger.warning("No company domain found, will try to search without domain-specific collection")
+            logger.warning(f"Company details: {company_details}")
+            logger.warning(f"Company context: {company_details.company_context}")
+            logger.warning(f"Company domain: {company_details.company_context.company_domain}")
+            logger.warning(f"Company name: {company_details.company_name}")
+            logger.warning(f"Company analysis: {company_details.company_analysis}")
+
+        
+        # Resolve collection name
+        from rag.vectorstore import vector_store
+        collection_name = None
+        if domain:
+            collection_name = vector_store.resolve_collection_name(domain, "pain_phrases")
+            logger.info(f"Resolved collection name: {collection_name} for domain: {domain}")
+        else:
+            # Try common collection names
+            collections = vector_store.client.get_collections().collections
+            collection_names = [c.name for c in collections]
+            # Look for pain_phrases collections
+            pain_collections = [c for c in collection_names if 'pain_phrases' in c.lower()]
+            if pain_collections:
+                collection_name = pain_collections[0]  # Use first found
+                logger.info(f"Using pain_phrases collection: {collection_name}")
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="No pain_phrases collection found in Qdrant. Please ensure company domain is configured."
+                )
+        
+        # Process each item in the extraction result
+        # Expected format: list of items with "classification" and "source_snippet"
+        items = extraction_result
+        if isinstance(extraction_result, dict):
+            # If it's a dict, try to find a list of items
+            items = extraction_result.get('items', extraction_result.get('results', [extraction_result]))
+        elif not isinstance(extraction_result, list):
+            items = [extraction_result]
+        
+        # Build replacement map: source_snippet -> embedded_text
+        replacement_map = {}
+        modified_asset = request.original_asset
+        
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+                
+            classification = item.get('classification', '')
+            if classification != 'pain_signal':
+                continue
+            
+            source_snippet = item.get('source_snippet', '').strip()
+            if not source_snippet:
+                logger.warning(f"Skipping item with empty source_snippet: {item}")
+                continue
+            
+            logger.info(f"Searching Qdrant for pain phrase: {source_snippet[:50]}...")
+            
+            # Generate embedding for source_snippet
+            from openai import OpenAI
+            openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
+            embedding_response = openai_client.embeddings.create(
+                input=source_snippet,
+                model=vector_store._model_name
+            )
+            query_vector = embedding_response.data[0].embedding
+            
+            # Search Qdrant
+            try:
+                search_results = vector_store.client.query_points(
+                    collection_name=collection_name,
+                    query=query_vector,
+                    limit=1,  # Get top match
+                    with_payload=True,
+                    with_vectors=False
+                )
+                
+                if search_results.points and len(search_results.points) > 0:
+                    top_match = search_results.points[0]
+                    embedded_text = top_match.payload.get('embedded_text', '')
+                    
+                    if embedded_text:
+                        replacement_map[source_snippet] = embedded_text
+                        logger.info(f"✓ Found replacement: '{source_snippet[:30]}...' -> '{embedded_text[:30]}...'")
+                    else:
+                        logger.warning(f"No embedded_text found in payload for: {source_snippet[:50]}")
+                else:
+                    logger.warning(f"No matches found in Qdrant for: {source_snippet[:50]}")
+            except Exception as e:
+                logger.error(f"Error searching Qdrant for '{source_snippet[:50]}': {e}", exc_info=True)
+        
+        # Step 6: Replace source_snippets with embedded_text in the original asset
+        logger.info(f"Replacing {len(replacement_map)} pain phrases in original asset...")
+        
+        # Sort replacements by length (longest first) to avoid partial replacements
+        sorted_replacements = sorted(replacement_map.items(), key=lambda x: len(x[0]), reverse=True)
+        
+        for source_snippet, embedded_text in sorted_replacements:
+            # Replace all occurrences
+            modified_asset = modified_asset.replace(source_snippet, embedded_text)
+            logger.debug(f"Replaced: '{source_snippet[:30]}...' with '{embedded_text[:30]}...'")
+        
+        logger.info(f"✓ Asset Assistant pipeline completed successfully")
+        return RecommendationsResponse(modified_asset=modified_asset)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in Asset Assistant pipeline: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Asset Assistant pipeline failed: {str(e)}"
+        )
 

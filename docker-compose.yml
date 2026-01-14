@@ -25,7 +25,6 @@ services:
       - JWT_SECRET=${JWT_SECRET}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # Use QDRANT_URL from host/.env instead of hardcoded Docker URL
-      - QDRANT_URL=https://c4c03fda-2e4b-45d9-bf2f-e442ba883e0b.eu-west-1-0.aws.cloud.qdrant.io:6333
       - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - STORAGE_PATH=/app/storage
       - ALLOWED_ORIGINS=http://localhost:3000
@@ -38,7 +37,8 @@ services:
     networks:
       - marketing-mvp-network
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-config logging_config.json
-
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 volumes:
   qdrant_storage:
   backend_storage:

@@ -1200,12 +1200,15 @@ export default function MaintenancePage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
                   >
                     <option value="">Select a version</option>
-                    {versions.map((version) => (
-                      <option key={version.edited_at_iso} value={version.edited_at_iso}>
-                        {new Date(version.edited_at_iso * 1000).toLocaleString()} - {version.edited_by_sub}
-                        {version.edit_comment && ` - ${version.edit_comment}`}
-                      </option>
-                    ))}
+                    {versions.map((version) => {
+                      const date = new Date(version.edited_at_iso * 1000)
+                      return (
+                        <option key={version.edited_at_iso} value={version.edited_at_iso}>
+                          {date.toLocaleString()} ({date.toISOString()}) - {version.edited_by_sub}
+                          {version.edit_comment && ` - ${version.edit_comment}`}
+                        </option>
+                      )
+                    })}
                   </select>
                 </div>
               )}

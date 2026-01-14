@@ -13,6 +13,11 @@ import { isAuthenticated, isAdmin, getAuthToken } from '@/lib/auth'
 function HomePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'generator' | 'assistant'>('generator')
+  
+  // Asset Generator states
   const [selectedOperationalPain, setSelectedOperationalPain] = useState<string>('')
   const [contextText, setContextText] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
@@ -35,6 +40,12 @@ function HomePageContent() {
   const [selectedCompetitor, setSelectedCompetitor] = useState<string>('')
   const [isLoadingCompetitors, setIsLoadingCompetitors] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  // Asset Assistant states
+  const [originalAsset, setOriginalAsset] = useState<string>('')
+  const [modifiedAsset, setModifiedAsset] = useState<string>('')
+  const [isGettingRecommendations, setIsGettingRecommendations] = useState(false)
+  const [modifiedAssetViewMode, setModifiedAssetViewMode] = useState<'edit' | 'diff'>('edit')
 
   const COMPANY_OPTIONS = ['Algosec', 'CyberArk', 'JFrog', 'Cloudinary', 'Incredibuild']
 
@@ -273,6 +284,150 @@ function HomePageContent() {
     fileInputRef.current?.click()
   }
 
+  // Function to highlight differences between original and modified text
+  const highlightDifferences = (original: string, modified: string): string => {
+    if (!modified) return ''
+    
+    // Escape HTML
+    const escapeHtml = (text: string) => {
+      const div = document.createElement('div')
+      div.textContent = text
+      return div.innerHTML
+    }
+    
+    if (!original) {
+      // All text is new - mark in dark green
+      return `<span style="color: #006400; font-weight: bold;">${escapeHtml(modified)}</span>`
+    }
+    
+    // Split into words (preserving whitespace)
+    const originalWords = original.split(/(\s+)/)
+    const modifiedWords = modified.split(/(\s+)/)
+    
+    // Track matched indices
+    const origMatched = new Set<number>()
+    const modMatched = new Set<number>()
+    
+    // First pass: find exact sequential matches
+    let origIdx = 0
+    let modIdx = 0
+    
+    while (origIdx < originalWords.length && modIdx < modifiedWords.length) {
+      if (originalWords[origIdx] === modifiedWords[modIdx]) {
+        origMatched.add(origIdx)
+        modMatched.add(modIdx)
+        origIdx++
+        modIdx++
+      } else {
+        // Try to find the word in the other array
+        let foundInMod = false
+        for (let i = modIdx + 1; i < Math.min(modIdx + 20, modifiedWords.length); i++) {
+          if (originalWords[origIdx] === modifiedWords[i] && !modMatched.has(i)) {
+            // Found match later in modified - words between are additions
+            foundInMod = true
+            break
+          }
+        }
+        
+        let foundInOrig = false
+        for (let i = origIdx + 1; i < Math.min(origIdx + 20, originalWords.length); i++) {
+          if (originalWords[i] === modifiedWords[modIdx] && !origMatched.has(i)) {
+            // Found match later in original - words between are deletions
+            foundInOrig = true
+            break
+          }
+        }
+        
+        if (!foundInMod && !foundInOrig) {
+          // No match found - this is a change
+          origIdx++
+          modIdx++
+        } else if (foundInMod) {
+          origIdx++
+        } else {
+          modIdx++
+        }
+      }
+    }
+    
+    // Second pass: find remaining matches (non-sequential)
+    for (let mIdx = 0; mIdx < modifiedWords.length; mIdx++) {
+      if (modMatched.has(mIdx)) continue
+      for (let oIdx = 0; oIdx < originalWords.length; oIdx++) {
+        if (origMatched.has(oIdx)) continue
+        if (originalWords[oIdx] === modifiedWords[mIdx]) {
+          origMatched.add(oIdx)
+          modMatched.add(mIdx)
+          break
+        }
+      }
+    }
+    
+    // Build result with proper highlighting
+    let result = ''
+    origIdx = 0
+    modIdx = 0
+    
+    while (origIdx < originalWords.length || modIdx < modifiedWords.length) {
+      if (origIdx >= originalWords.length) {
+        // Remaining in modified are additions - dark green
+        result += `<span style="color: #006400; font-weight: bold;">${escapeHtml(modifiedWords[modIdx])}</span>`
+        modIdx++
+      } else if (modIdx >= modifiedWords.length) {
+        // Remaining in original are deletions - dark red with strikethrough
+        result += `<span style="color: #8B0000; font-weight: bold; text-decoration: line-through;">${escapeHtml(originalWords[origIdx])}</span>`
+        origIdx++
+      } else if (origMatched.has(origIdx) && modMatched.has(modIdx) && originalWords[origIdx] === modifiedWords[modIdx]) {
+        // Matched words - no highlighting
+        result += escapeHtml(modifiedWords[modIdx])
+        origIdx++
+        modIdx++
+      } else if (!origMatched.has(origIdx) && !modMatched.has(modIdx)) {
+        // Both unmatched - this is a change: show original (dark red strikethrough) + modified (dark green)
+        result += `<span style="color: #8B0000; font-weight: bold; text-decoration: line-through;">${escapeHtml(originalWords[origIdx])}</span>`
+        result += `<span style="color: #006400; font-weight: bold;">${escapeHtml(modifiedWords[modIdx])}</span>`
+        origIdx++
+        modIdx++
+      } else if (!origMatched.has(origIdx)) {
+        // Original word not matched - deletion (dark red with strikethrough)
+        result += `<span style="color: #8B0000; font-weight: bold; text-decoration: line-through;">${escapeHtml(originalWords[origIdx])}</span>`
+        origIdx++
+      } else if (!modMatched.has(modIdx)) {
+        // Modified word not matched - addition (dark green)
+        result += `<span style="color: #006400; font-weight: bold;">${escapeHtml(modifiedWords[modIdx])}</span>`
+        modIdx++
+      } else {
+        // Both matched but at different positions - advance both
+        result += escapeHtml(modifiedWords[modIdx])
+        origIdx++
+        modIdx++
+      }
+    }
+    
+    return result
+  }
+
+  const handleGetRecommendations = async () => {
+    if (!originalAsset.trim()) {
+      alert('Please enter an original asset')
+      return
+    }
+
+    setIsGettingRecommendations(true)
+    try {
+      const response = await ragAPI.getRecommendations(originalAsset)
+      setModifiedAsset(response.modified_asset || response.recommended_text || '')
+    } catch (error: any) {
+      console.error('Error getting recommendations:', error)
+      alert(
+        error.response?.data?.detail ||
+          'Failed to get recommendations. Please try again.'
+      )
+    } finally {
+      setIsGettingRecommendations(false)
+    }
+  }
+
   const handleProcess = async () => {
     // Validation
     if (!assetType.trim()) {
@@ -424,6 +579,36 @@ function HomePageContent() {
               
             </p>
           </div>
+
+          {/* Tabs */}
+          <div className="border-b border-gray-200 mb-6">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('generator')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'generator'
+                    ? 'border-primary-500 text-primary-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Asset Generator
+              </button>
+              <button
+                onClick={() => setActiveTab('assistant')}
+                className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'assistant'
+                    ? 'border-primary-500 text-primary-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Asset Assistant
+              </button>
+            </nav>
+          </div>
+
+          {/* Asset Generator Tab */}
+          {activeTab === 'generator' && (
+            <div className="space-y-4">
 
           {/* Main Content: Context on left, Settings on right */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -607,6 +792,102 @@ function HomePageContent() {
               CREATE ASSET
             </Button>
           </section>
+            </div>
+          )}
+
+          {/* Asset Assistant Tab */}
+          {activeTab === 'assistant' && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Original Asset Box */}
+                <div className="bg-gray-100 rounded-lg border border-slate-200 p-4">
+                  <h2 className="text-sm font-medium text-slate-900 mb-3">
+                    Original Asset
+                  </h2>
+                  <TextArea
+                    label=""
+                    rows={20}
+                    value={originalAsset}
+                    onChange={(e) => setOriginalAsset(e.target.value)}
+                    placeholder="Paste or type your original asset text here..."
+                    className="w-full"
+                  />
+                </div>
+
+                {/* Modified Asset Box */}
+                <div className="bg-gray-100 rounded-lg border border-slate-200 p-4">
+                  <h2 className="text-sm font-medium text-slate-900 mb-3">
+                    Modified Asset
+                  </h2>
+                  {modifiedAssetViewMode === 'edit' ? (
+                    <TextArea
+                      label=""
+                      rows={20}
+                      value={modifiedAsset}
+                      onChange={(e) => setModifiedAsset(e.target.value)}
+                      placeholder="Modified text will appear here after clicking 'Provide Recommendations', or you can type directly..."
+                      className="w-full"
+                    />
+                  ) : (
+                    <div className="bg-white rounded border border-slate-300 p-3 min-h-[400px] max-h-[500px] overflow-y-auto">
+                      {modifiedAsset && originalAsset ? (
+                        <div
+                          className="text-sm text-slate-700 whitespace-pre-wrap"
+                          dangerouslySetInnerHTML={{
+                            __html: highlightDifferences(originalAsset, modifiedAsset)
+                          }}
+                        />
+                      ) : (
+                        <p className="text-slate-400 text-sm">
+                          No content to display. Switch to Edit mode to add text.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {/* Toggle buttons at the bottom */}
+                  <div className="mt-3 flex justify-end space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setModifiedAssetViewMode('edit')}
+                      className={`px-3 py-1.5 text-xs font-medium rounded ${
+                        modifiedAssetViewMode === 'edit'
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                    >
+                      Modify
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setModifiedAssetViewMode('diff')}
+                      className={`px-3 py-1.5 text-xs font-medium rounded ${
+                        modifiedAssetViewMode === 'diff'
+                          ? 'bg-primary-600 text-white'
+                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                      }`}
+                      disabled={!modifiedAsset || !originalAsset}
+                    >
+                      View Diff
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Provide Recommendations Button */}
+              <section className="bg-gray-100 rounded-lg border border-slate-200 p-3 flex justify-center">
+                <Button
+                  variant="primary"
+                  onClick={handleGetRecommendations}
+                  isLoading={isGettingRecommendations}
+                  loadingText="Getting Recommendations..."
+                  className="w-fit py-2 text-sm"
+                  disabled={!originalAsset.trim()}
+                >
+                  Provide Recommendations
+                </Button>
+              </section>
+            </div>
+          )}
         </div>
       </main>
     </div>

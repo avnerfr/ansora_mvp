@@ -104,11 +104,13 @@ def get_asset_creation_template() -> Optional[str]:
     Returns:
         The template body string, or None if not found
     """
+    logger.info(f"++++++++++++++++++++Getting asset_creation_template from DynamoDB")
     template = get_latest_prompt_template('asset_creation_template')
     if template:
         logger.info(
             f"Using asset_creation_template from DynamoDB "
-            f"(edited by: {template['edited_by_sub']})"
+            f"(edited by: {template['edited_by_sub']} on {template['edited_at_iso']})"
+            f"(template: {template['template_body'][0:100]}...)"
         )
         return template['template_body']
     return None

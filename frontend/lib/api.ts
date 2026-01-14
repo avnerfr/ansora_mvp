@@ -157,6 +157,12 @@ export const ragAPI = {
     })
     return response.data
   },
+  getRecommendations: async (originalAsset: string) => {
+    const response = await apiClient.post('/rag/recommendations', {
+      original_asset: originalAsset,
+    })
+    return response.data
+  },
 }
 
 // Maintenance API (Admin only)

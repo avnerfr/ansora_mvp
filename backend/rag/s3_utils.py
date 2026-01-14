@@ -9,6 +9,8 @@ from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from botocore.exceptions import ClientError
 import os
+from core.auth import get_cognito_groups_from_token
+from rag.agents import company_analysis_agent
 
 logger = logging.getLogger(__name__)
 
@@ -271,3 +273,69 @@ def get_company_website(company_name: str) -> str:
     # Default: construct from company name
     normalized = company_name.lower().replace(' ', '')
     return f"https://{normalized}.com"
+
+
+def get_company_data_from_credentials(token, company: str) -> CompanyDetails:
+    """
+    Get company data from credentials.
+    
+    Args:
+        credentials: HTTP Authorization credentials
+        
+    Returns:
+        CompanyDetails object
+    """
+
+    groups = get_cognito_groups_from_token(token, company)
+    is_administrator = 'Administrators' in groups
+    logger.info(f"User is administrator: {is_administrator}")
+
+    logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")    
+    # Determine company name
+    company_name = None
+    if company:
+        # Administrator selected company from dropdown
+        company_name = company
+        logger.info(f"Using company from request (admin): {company_name}")
+    else:
+        # Get company from Cognito groups (non-admin users)
+        # Filter out Administrators group
+        company_groups = [g for g in groups if g != 'Administrators']
+        if company_groups:
+            company_name = company_groups[0]  # Use first non-admin group
+            logger.info(f"Using company from Cognito groups: {company_name}")
+        else:
+            logger.warning("No company found in Cognito groups and no company in request")
+    logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    
+    # Get or generate company information
+    company_details = None
+    company_analysis = None
+     
+    if company_name:
+        # Check S3 for existing company information (returns CompanyDetails object)
+        company_details = get_latest_company_file(company_name)
+        
+        if company_details:
+            # We have a CompanyDetails object - extract company_analysis string if needed for pipeline
+            # For now, we'll pass the CompanyDetails object to the pipeline
+            logger.info(f"Using existing company details for {company_name}")
+        else:
+            # Generate new company information
+            logger.info(f"Generating new company information for {company_name}")
+            company_website = get_company_website(company_name)
+            try:
+                company_analysis = company_analysis_agent(company_name, company_website)
+           
+                # Save to S3
+                save_company_file(company_name, company_analysis)
+                logger.info(f"Saved company information to S3 for {company_name}")
+                
+                # Load the newly saved file as CompanyDetails
+                company_details = get_latest_company_file(company_name)
+            except Exception as e:
+                logger.error(f"Error generating company information: {e}")
+                # Continue without company information rather than failing
+    
+ 
+    return company_details

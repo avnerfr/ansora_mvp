@@ -69,6 +69,8 @@ async def get_collections(current_user: User = Depends(require_admin)):
         if settings.QDRANT_API_KEY:
             masked_key = f"{settings.QDRANT_API_KEY[:8]}...{settings.QDRANT_API_KEY[-4:]}" if len(settings.QDRANT_API_KEY) > 12 else "***"
             logger.info(f"QDRANT_API_KEY is set: {masked_key} (length: {len(settings.QDRANT_API_KEY)})")
+            logger.info(f"QDRANT_URL is set: {settings.QDRANT_URL})")
+
         else:
             logger.warning("QDRANT_API_KEY is NOT set in settings")
         logger.info(f"Vector store client URL: {vector_store.client._url if hasattr(vector_store.client, '_url') else 'N/A'}")

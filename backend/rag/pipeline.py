@@ -34,7 +34,7 @@ gmail_client_id = os.getenv("GMAIL_CLIENT_ID")
 gmail_client_secret = os.getenv("GMAIL_CLIENT_SECRET")
 gmail_refresh_token = os.getenv("GMAIL_REFRESH_TOKEN")
 
-from .prompts import SYSTEM_PROMPT, DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_1, VECTOR_DB_RETREIVAL_PROMPT
+from .prompts import SYSTEM_PROMPT, VECTOR_DB_RETREIVAL_PROMPT
 from .dynamodb_prompts import get_prompt_metadata_for_logging, AWS_REGION
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -578,6 +578,12 @@ async def build_retrieval_query(
 
     company_value_proposition = ""# company_context.get('company_value_proposition', '')
     company_domain =  company_context.get('company_domain', '')
+    
+    # Validate that VECTOR_DB_RETREIVAL_PROMPT is loaded
+    if VECTOR_DB_RETREIVAL_PROMPT is None:
+        error_msg = "VECTOR_DB_RETREIVAL_PROMPT not loaded. Ensure 'asset_creation_rag_build_template' exists in DynamoDB."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
     retrieval_prompt = VECTOR_DB_RETREIVAL_PROMPT.format(
         user_provided_text=marketing_text,
@@ -1633,7 +1639,7 @@ async def process_rag(
         tuple: (refined_text, sources_list, retrieved_docs_list, final_prompt, email_content)
     """
     import uuid as uuid_lib
-
+    #return None, None, None, None, None
     # Create a unique execution key
     execution_key = f"{request_id}_{user_id}_{hash(tuple(backgrounds))}_{hash(marketing_text)}"
     
