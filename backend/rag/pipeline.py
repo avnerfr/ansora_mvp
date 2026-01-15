@@ -192,6 +192,11 @@ STRUCTURE:
 }
 
 
+
+
+
+
+
 def _load_asset_type_rules_from_dynamodb() -> dict[str, str]:
     """
     Load asset type rules from DynamoDB.
@@ -678,6 +683,7 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
         combined_docs = sorted(combined_docs, key=lambda x: x.metadata.get('score', 0), reverse=True)
 
         logger.info(f">>>>>>>>>>>>>>>>>>>>>combined_docs count: {len(combined_docs)}")
+        logger.info(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         
         for doc in combined_docs:
             doc_type = doc.metadata.get('doc_type', '')
@@ -773,6 +779,19 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
             buyer_language = doc.metadata.get('buyer_language', [])
             if not isinstance(buyer_language, list):
                 buyer_language = [buyer_language] if buyer_language and str(buyer_language).strip() else []
+            else:
+                # Convert list of dicts to list of strings if needed
+                # buyer_language can be either List[str] or List[Dict[str, str]]
+                processed_buyer_language = []
+                for item in buyer_language:
+                    if isinstance(item, dict):
+                        # Extract the buyer_language string from the dict
+                        bl_text = item.get('buyer_language', '')
+                        if bl_text and str(bl_text).strip():
+                            processed_buyer_language.append(str(bl_text).strip())
+                    elif isinstance(item, str) and item.strip():
+                        processed_buyer_language.append(item.strip())
+                buyer_language = processed_buyer_language
             implicit_risks = doc.metadata.get('implicit_risks', [])
             if not isinstance(implicit_risks, list):
                 implicit_risks = [implicit_risks] if implicit_risks and str(implicit_risks).strip() else []
@@ -992,6 +1011,10 @@ async def rerank_and_filter_documents(
             base_url=settings.DEEPINFRA_API_BASE_URL,
             temperature=0.3,  # Lower temperature for more focused filtering
         )
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@rerank_prompt@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@") 
+        logger.info(f"rerank_prompt: {rerank_prompt}")
+        logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+
         
         logger.info("Running reranking model...")
         messages = [HumanMessage(content=rerank_prompt)]
@@ -1510,8 +1533,9 @@ def build_final_prompt(
     company_info = ""
     company_json = {}
     if company_details:
-        company_json = {
-            'company_context': {
+        company_context_dict = {}
+        if company_details.company_context:
+            company_context_dict = {
                 'company_name': company_details.company_context.company_name,
                 'company_domain': company_details.company_context.company_domain,
                 'self_described_positioning': company_details.company_context.self_described_positioning,
@@ -1520,43 +1544,104 @@ def build_final_prompt(
                 'known_competitors': company_details.company_context.known_competitors,
                 'target_audience': company_details.company_context.target_audience,
                 'operational_pains': company_details.company_context.operational_pains,
-            },
-            'usage_rules': company_details.company_context.usage_rules
+            }
+        
+        company_json = {
+            'company_context': company_context_dict,
+            'usage_rules': company_details.company_context.usage_rules if company_details.company_context else []
         }
         company_info = json.dumps(company_json, indent=2)
     
 
     # Use icp value for both target_audience and icp for backward compatibility
     icp_value = icp or ''
-    prompt = template.format(
-        operational_pain_point=backgrounds_str,
-        backgrounds=backgrounds_str,  # Alias for backgrounds placeholder
-        use_cases=backgrounds_str,
-        campaing_context=marketing_text,
-        marketing_text=marketing_text,  # Alias for marketing_text placeholder
-        context=marketing_text,
-        user_provided_text=marketing_text,
-        vector_search_context=vector_search_context,
-        asset_type=asset_type or '',
-        asset_type_instructions=asset_type_instructions,
-        target_audience=icp_value,  # New format
-        icp=icp_value,  # Old format for backward compatibility
-        company_analysis=company_info,
-        latest_anouncements=company_json.get('company_context', {}).get('latest_anouncements', ''),
-        company_name=company_name,
-        competition_analysis='',  # No longer used
-        company_domain=company_json.get('company_context', {}).get('company_domain', ''),
-        company_value_proposition=company_json.get('company_value_proposition'),
-    )
-
-    # Check for any remaining template variables
-    remaining_vars = re.findall(r'\{\{.*?\}\}', prompt)
+    
+    # Helper function to safely escape format braces in values
+    # This prevents Python's format() from trying to interpret braces in JSON/structured data
+    def escape_format_braces(value: str) -> str:
+        """Escape braces in values to prevent format() from interpreting them."""
+        if not value:
+            return ''
+        # Escape single braces by doubling them so they're treated as literals
+        return str(value).replace('{', '{{').replace('}', '}}')
+    
+    # Ensure all values are strings
+    # Escape braces in values that might contain JSON/structured data to prevent format conflicts
+    format_params = {
+        'operational_pain_point': str(backgrounds_str) if backgrounds_str else '',
+        'backgrounds': str(backgrounds_str) if backgrounds_str else '',  # Alias for backgrounds placeholder
+        'use_cases': str(backgrounds_str) if backgrounds_str else '',
+        'campaing_context': str(marketing_text) if marketing_text else '',
+        'marketing_text': str(marketing_text) if marketing_text else '',  # Alias for marketing_text placeholder
+        'context': str(marketing_text) if marketing_text else '',
+        'user_provided_text': str(marketing_text) if marketing_text else '',
+        'vector_search_context': escape_format_braces(vector_search_context) if vector_search_context else '',
+        'asset_type': str(asset_type) if asset_type else '',
+        'asset_type_instructions': str(asset_type_instructions) if asset_type_instructions else '',
+        'asset_type_rules': str(asset_type_instructions) if asset_type_instructions else '',  # Alias for asset_type_rules placeholder
+        'target_audience': str(icp_value),
+        'icp': str(icp_value),  # Old format for backward compatibility
+        'company_analysis': escape_format_braces(company_info) if company_info else '',
+        'latest_anouncements': str(company_json.get('company_context', {}).get('latest_anouncements', '')) if isinstance(company_json.get('company_context'), dict) else '',
+        'company_name': str(company_name) if company_name else '',
+        'competition_analysis': '',  # No longer used
+        'company_domain': str(company_json.get('company_context', {}).get('company_domain', '')) if isinstance(company_json.get('company_context'), dict) else '',
+        'company_value_proposition': str(company_json.get('company_context', {}).get('self_described_positioning', '')) if isinstance(company_json.get('company_context'), dict) else '',
+    }
+    
+    # Use manual replacement instead of .format() to avoid issues with nested format syntax
+    # This is more robust when templates contain complex syntax or JSON with braces
+    logger.debug("Using manual string replacement for template formatting")
+    prompt = template
+    
+    # Replace variables in order (longest names first to avoid partial matches)
+    # Sort by length descending to handle cases like 'asset_type_instructions' before 'asset_type'
+    sorted_keys = sorted(format_params.keys(), key=len, reverse=True)
+    
+    for key in sorted_keys:
+        value = format_params[key]
+        # Replace all occurrences of {key} with the value
+        # Handle both {key} and {{key}} patterns
+        placeholder = f'{{{key}}}'
+        if placeholder in prompt:
+            prompt = prompt.replace(placeholder, value)
+        # Also handle double braces (escaped format syntax)
+        placeholder_double = f'{{{{{key}}}}}'
+        if placeholder_double in prompt:
+            # If it's double-braced, replace with single-braced value (unescape)
+            prompt = prompt.replace(placeholder_double, value)
+    
+    # Check for any remaining unreplaced variables
+    remaining_vars = re.findall(r'\{(\w+)\}', prompt)
     if remaining_vars:
-        logger.warning(f"⚠ Found unreplaced template variables: {remaining_vars}")
-        # Log the prompt with markers around remaining variables for debugging
-        for var in remaining_vars:
-            prompt = prompt.replace(var, f"***UNREPLACED:{var}***")
-        logger.warning(f"Prompt with unreplaced variables marked:\n{prompt}")
+        # Filter out variables we know about but might have been intentionally left
+        known_vars = set(format_params.keys())
+        unknown_vars = [v for v in remaining_vars if v not in known_vars]
+        if unknown_vars:
+            logger.warning(f"⚠ Found unreplaced template variables: {set(unknown_vars)}")
+            # Log a sample of the template around these variables for debugging
+            for var in set(unknown_vars)[:3]:  # Limit to first 3 to avoid log spam
+                pattern = f'{{{var}}}'
+                if pattern in prompt:
+                    idx = prompt.find(pattern)
+                    sample = prompt[max(0, idx-50):idx+len(pattern)+50]
+                    logger.warning(f"  Sample context for {{{var}}}: ...{sample}...")
+
+    # Check for any remaining template variables (single braces)
+    remaining_vars = re.findall(r'\{(\w+)\}', prompt)
+    if remaining_vars:
+        # Filter out variables we know about but might have been intentionally left
+        known_vars = set(format_params.keys())
+        unknown_vars = [v for v in remaining_vars if v not in known_vars]
+        if unknown_vars:
+            logger.warning(f"⚠ Found unreplaced template variables: {set(unknown_vars)}")
+            # Log a sample of the template around these variables for debugging
+            for var in set(unknown_vars)[:3]:  # Limit to first 3 to avoid log spam
+                pattern = f'{{{var}}}'
+                if pattern in prompt:
+                    idx = prompt.find(pattern)
+                    sample = prompt[max(0, idx-50):idx+len(pattern)+50]
+                    logger.warning(f"  Sample context for {{{var}}}: ...{sample}...")
     else:
         logger.info("✓ All template variables successfully replaced")
 
@@ -1772,27 +1857,7 @@ async def process_rag(
 
 
         
-        # Build email content (always build, but only send if administrator)
         email_content = ""
-        try:
-            email_sent, email_content = send_email(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                                   company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context, 
-                                                   prompt, refined_text, sources, retrieved_docs, send=is_administrator,
-                                                   rerank_prompt=rerank_prompt, rerank_result=rerank_result)
-            if is_administrator:
-                if email_sent:
-                    logger.info("Email sent successfully to administrators")
-                else:
-                    logger.warning("Failed to send email to administrators")
-        except Exception as e:
-            logger.error(f"Email processing failed (non-critical): {e}", exc_info=True)
-            # Still build email content even if sending fails
-            try:
-                email_content = build_email_content(user_id, backgrounds, marketing_text, asset_type, icp, template,
-                                                    company_name, company_details, retrieval_query, retrieval_prompt, vector_search_context,
-                                                    prompt, refined_text, sources, retrieved_docs, rerank_prompt, rerank_result)
-            except Exception as e2:
-                logger.error(f"Failed to build email content: {e2}", exc_info=True)
         
         logger.info(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         logger.info(f"<<<<<<<<<<<<<<  RAG Pipeline Completed Successfully <<<<<<<<<<<<<<<<<<<")

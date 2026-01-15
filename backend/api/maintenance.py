@@ -669,6 +669,25 @@ MODEL_CONFIGS = {
                 "display_name": "GLM-4.6",
                 "url": "https://deepinfra.com/zai-org/GLM-4.6"
             },
+            # Reranking models
+            "Qwen/Qwen3-Reranker-0.6B": {
+                "cost_input": 0.001, 
+                "cost_output": 0.0, 
+                "display_name": "Qwen3 Reranker 0.6B",
+                "url": "https://api.deepinfra.com/v1/inference/Qwen/Qwen3-Reranker-0.6B"
+            },
+            "Qwen/Qwen3-Reranker-4B": {
+                "cost_input": 0.005, 
+                "cost_output": 0.0, 
+                "display_name": "Qwen3 Reranker 4B",
+                "url": "https://api.deepinfra.com/v1/inference/Qwen/Qwen3-Reranker-0.4B"
+            },
+            "Qwen/Qwen3-Reranker-8B": {
+                "cost_input": 0.01, 
+                "cost_output": 0.0, 
+                "display_name": "Qwen3 Reranker 8B",
+                "url": "https://api.deepinfra.com/v1/inference/Qwen/Qwen3-Reranker-0.8B"              
+            },
         }
     },
     "openrouter": {
@@ -793,8 +812,29 @@ async def call_openrouter(model: str, system_prompt: str, prompt: str, api_key: 
         return data["choices"][0]["message"]["content"]
 
 
+async def call_deepinfra_reranker(model: str, query: str, documents: List[str], api_key: str) -> Dict[str, Any]:
+    """Call DeepInfra Reranker API."""
+    url = f"https://api.deepinfra.com/v1/inference/{model}"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "queries": [query],
+        "documents": documents
+    }
+    
+    logger.debug(f"DeepInfra Reranker API call - URL: {url}, Model: {model}, Documents: {len(documents)}")
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        return data
+
+
 async def call_deepinfra(model: str, system_prompt: str, prompt: str, api_key: str) -> str:
-    """Call DeepInfra API."""
+    """Call DeepInfra API for LLM models."""
     url = f"https://api.deepinfra.com/v1/openai/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -879,8 +919,78 @@ async def test_model(
             api_key = os.getenv("DEEPINFRA_API_KEY", "")
             if not api_key:
                 raise HTTPException(status_code=400, detail="DEEPINFRA_API_KEY not configured")
-            logger.info(f"Calling DeepInfra with model: {request.model}")
-            response_text = await call_deepinfra(request.model, system_prompt, prompt, api_key)
+            
+            # Check if this is a reranking model
+            is_reranker = "reranker" in request.model.lower() or "Reranker" in request.model
+            
+            if is_reranker:
+                logger.info(f"Calling DeepInfra Reranker with model: {request.model}")
+                # For reranking models, the prompt is the query
+                # Documents should be provided in placeholders with key "documents" or as a list
+                query = prompt
+                documents = []
+                
+                # Try to get documents from placeholders
+                if "documents" in request.placeholders:
+                    # If documents is a JSON string, parse it
+                    docs_value = request.placeholders["documents"]
+                    try:
+                        import json
+                        if isinstance(docs_value, str):
+                            parsed = json.loads(docs_value)
+                            if isinstance(parsed, list):
+                                documents = parsed
+                            else:
+                                documents = [docs_value]
+                        else:
+                            documents = [str(docs_value)]
+                    except:
+                        # If not JSON, treat as single document or newline-separated
+                        documents = [d.strip() for d in docs_value.split('\n') if d.strip()]
+                else:
+                    # Try to extract documents from other placeholders or use prompt as single doc
+                    # For testing, we'll create sample documents if none provided
+                    if len(request.placeholders) > 0:
+                        # Use all placeholder values as documents
+                        documents = [str(v) for v in request.placeholders.values() if v]
+                    else:
+                        # Create sample documents for testing
+                        documents = [
+                            "This is a sample document about machine learning and AI.",
+                            "This document discusses natural language processing techniques.",
+                            "Here is information about deep learning models and neural networks."
+                        ]
+                        logger.info("No documents provided, using sample documents for reranking test")
+                
+                if not documents:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="Reranking models require documents. Please provide documents in a placeholder with key 'documents' (as JSON array or newline-separated text)."
+                    )
+                
+                rerank_result = await call_deepinfra_reranker(request.model, query, documents, api_key)
+                
+                # Format the response for display
+                scores = rerank_result.get("scores", [])
+                # Pair documents with scores and sort by score
+                doc_scores = list(zip(documents, scores))
+                doc_scores.sort(key=lambda x: x[1], reverse=True)
+                
+                response_text = f"Reranking Results:\n\n"
+                response_text += f"Query: {query}\n\n"
+                response_text += f"Ranked Documents (by relevance score):\n"
+                response_text += "=" * 80 + "\n"
+                for i, (doc, score) in enumerate(doc_scores, 1):
+                    response_text += f"\n[{i}] Score: {score:.4f}\n"
+                    response_text += f"Document: {doc[:200]}{'...' if len(doc) > 200 else ''}\n"
+                    response_text += "-" * 80 + "\n"
+                
+                # Add raw response info
+                response_text += f"\n\nRaw API Response:\n"
+                response_text += json.dumps(rerank_result, indent=2)
+            else:
+                logger.info(f"Calling DeepInfra LLM with model: {request.model}")
+                response_text = await call_deepinfra(request.model, system_prompt, prompt, api_key)
         elif vendor == "openrouter":
             api_key = os.getenv("OPENROUTER_API_KEY", "")
             if not api_key:

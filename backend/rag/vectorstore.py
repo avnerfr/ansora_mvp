@@ -341,7 +341,7 @@ class VectorStore:
             #logger.info(f"failure_type: {company_enumerations.get('failure_type', [])}")
             #logger.info(f"company_name: {company_name}")
             #logger.info(f"collection_name: {collection_name}")
-            #logger.info("#########################################################################")
+            logger.info("#########################################################################")
 
             search_results_old = self.client.query_points(
                 collection_name=collection_name,

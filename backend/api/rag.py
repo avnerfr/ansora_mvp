@@ -895,6 +895,19 @@ async def process_battle_cards(
                 buyer_language = metadata.get('buyer_language', [])
                 if not isinstance(buyer_language, list):
                     buyer_language = [buyer_language] if buyer_language and str(buyer_language).strip() else []
+                else:
+                    # Convert list of dicts to list of strings if needed
+                    # buyer_language can be either List[str] or List[Dict[str, str]]
+                    processed_buyer_language = []
+                    for item in buyer_language:
+                        if isinstance(item, dict):
+                            # Extract the buyer_language string from the dict
+                            bl_text = item.get('buyer_language', '')
+                            if bl_text and str(bl_text).strip():
+                                processed_buyer_language.append(str(bl_text).strip())
+                        elif isinstance(item, str) and item.strip():
+                            processed_buyer_language.append(item.strip())
+                    buyer_language = processed_buyer_language
                 implicit_risks = metadata.get('implicit_risks', [])
                 if not isinstance(implicit_risks, list):
                     implicit_risks = [implicit_risks] if implicit_risks and str(implicit_risks).strip() else []
