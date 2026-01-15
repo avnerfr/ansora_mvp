@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime
 import logging
@@ -26,6 +26,7 @@ from rag.dynamodb_prompts import get_latest_prompt_template
 import re
 from core.config import settings
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from rag.vectorstore import vector_store
 
 security = HTTPBearer()
 
@@ -288,7 +289,7 @@ async def process_marketing_material(
             asset_type=request.asset_type,
             icp=request.icp,
             template=template,
-            company_name=company_name,
+            company_name=company_details.company_name,
             company_details=company_details,
             is_administrator=is_administrator,
             request_id=request_id,  # Pass request_id to track duplicate calls
@@ -1069,7 +1070,68 @@ class RecommendationsRequest(BaseModel):
 
 class RecommendationsResponse(BaseModel):
     modified_asset: str
+    items: Optional[List[Dict[str, Any]]] = None  # List of items with classifications and metadata
 
+
+def get_domain_and_company_enumerations(credentials: HTTPAuthorizationCredentials, current_user: User, request, company: str):
+    logger.info(f"Asset Assistant request from user: {current_user.email} (ID: {current_user.id})")
+    
+    if not request.original_asset or not request.original_asset.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Original asset text is required")
+
+    # Administrators must explicitly select a company in the request
+    token = credentials.credentials
+    groups = get_cognito_groups_from_token(token)
+    is_administrator = 'Administrators' in groups
+    if is_administrator and not request.company:
+        logger.warning("Validation error: Administrator user did not provide company in request")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Company must be specified for administrator users")
+    
+    company_details = s3_utils.get_company_data_from_credentials(credentials.credentials, request.company)
+
+    # Get domain for collection name
+    domain = None
+    if company_details and company_details.company_context:
+        domain = company_details.company_context.company_domain
+    else:
+        logger.warning("No company domain found, will try to search without domain-specific collection")
+        logger.warning(f"Company details: {company_details}")
+        if company_details:
+            logger.warning(f"Company context: {company_details.company_context}")
+            if company_details.company_context:
+                logger.warning(f"Company domain: {company_details.company_context.company_domain}")
+            logger.warning(f"Company name: {company_details.company_name}")
+        # return error
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="No company domain found, Call Support to add company domain")
+    
+    # Resolve collection name
+    collection_name = vector_store.resolve_collection_name(domain, "buyer_language_1_0")
+    company_enumerations = get_company_enumerations(company_details.company_name)
+    return domain, company_enumerations, collection_name, company_details
+
+
+def parse_llm_response(llm_result):
+    try:
+        # Try to extract JSON from the response (might be wrapped in markdown code blocks)
+        import re
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', llm_result, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find JSON object directly
+            json_match = re.search(r'\{.*\}', llm_result, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                json_str = llm_result
+        
+        json_response = json.loads(json_str)
+        logger.info(f"✓ Parsed JSON response")
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse LLM response as JSON: {e}")
+        logger.error(f"Response was: {llm_result}")
+        raise HTTPException( status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"LLM did not return valid JSON. Response: {llm_result[:500]}"  )
+    return json_response
 
 @router.post("/recommendations", response_model=RecommendationsResponse)
 async def get_recommendations(
@@ -1084,50 +1146,31 @@ async def get_recommendations(
     3. Search Qdrant pain_phrases collection for each source_snippet
     4. Replace source_snippet with embedded_chunk in the original asset
     """
-    logger.info(f"Asset Assistant request from user: {current_user.email} (ID: {current_user.id})")
-    
-    if not request.original_asset or not request.original_asset.strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Original asset text is required"
-        )
 
-    # Administrators must explicitly select a company in the request
-    token = credentials.credentials
-    groups = get_cognito_groups_from_token(token)
-    is_administrator = 'Administrators' in groups
-    if is_administrator and not request.company:
-        logger.warning("Validation error: Administrator user did not provide company in request")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Company must be specified for administrator users"
-        )
-    
     try:
         # Step 1: Get company details
-
-        company_details = s3_utils.get_company_data_from_credentials(credentials.credentials, request.company)
+        logger.info("================= Step 1: Get company details =====================")
+        domain, company_enumerations, collection_name, company_details = get_domain_and_company_enumerations(credentials, current_user, request, request.company)
 
         # Step 2: Load prompt template from DynamoDB
-        logger.info("Loading asset_assistant_phrase_extraction_template from DynamoDB...")
+        logger.info("================= Step 2: Load prompt template from DynamoDB and add storyline text =====================")
         template_data = get_latest_prompt_template('asset_assistant_phrase_extraction_template')
-        
+ 
+
         if not template_data or not template_data.get('template_body'):
             error_msg = "Required prompt 'asset_assistant_phrase_extraction_template' not found in DynamoDB"
             logger.error(f"✗ {error_msg}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg
-            )
-        
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_msg)
+            
         prompt_template = template_data['template_body']
         logger.info(f"✓ Loaded prompt template (edited by: {template_data.get('edited_by_sub', 'unknown')} on {template_data.get('edited_at_iso', 'unknown')})")
         
         # Format prompt with original asset - use replace instead of format to avoid issues with curly braces in JSON examples
         formatted_prompt = prompt_template.replace('{storyline_text}', request.original_asset)
+
+        logger.info("================= Step 3: Retreive signals from LLM =====================")
         
         # Step 3: Call LLM to extract pain signals
-        logger.info("Calling LLM to extract pain signals...")
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage
         
@@ -1141,95 +1184,34 @@ async def get_recommendations(
         messages = [HumanMessage(content=formatted_prompt)]
         llm_response = await llm.ainvoke(messages)
         llm_result = llm_response.content.strip()
+        llm_json_response = parse_llm_response(llm_result)
         
-        logger.info(f"✓ LLM response received: {len(llm_result)} chars")
-        logger.info(f"LLM response: {llm_result}")
-        
-        # Step 4: Parse JSON response
-        try:
-            # Try to extract JSON from the response (might be wrapped in markdown code blocks)
-            import re
-            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', llm_result, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # Try to find JSON object directly
-                json_match = re.search(r'\{.*\}', llm_result, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    json_str = llm_result
-            
-            extraction_result = json.loads(json_str)
-            extraction_result = extraction_result.get('phrases')
-            logger.info(f"✓ Parsed JSON response")
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Response was: {llm_result}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"LLM did not return valid JSON. Response: {llm_result[:500]}"
-            )
-        
-        # Step 5: Extract pain signals and search Qdrant
-        logger.info("Processing pain signals and searching Qdrant...")
-        
-        # Get domain for collection name
-        domain = None
-        if company_details and company_details.company_context:
-            domain = company_details.company_context.company_domain
-        else:
-            logger.warning("No company domain found, will try to search without domain-specific collection")
-            logger.warning(f"Company details: {company_details}")
-            logger.warning(f"Company context: {company_details.company_context}")
-            logger.warning(f"Company domain: {company_details.company_context.company_domain}")
-            logger.warning(f"Company name: {company_details.company_name}")
-            logger.warning(f"Company analysis: {company_details.company_analysis}")
-
-        
-        # Resolve collection name
-        from rag.vectorstore import vector_store
-        collection_name = None
-        if domain:
-            collection_name = vector_store.resolve_collection_name(domain, "buyer_language_1_0")
-            logger.info(f"Resolved collection name: {collection_name} for domain: {domain}")
-        else:
-            # Try common collection names
-            collections = vector_store.client.get_collections().collections
-            collection_names = [c.name for c in collections]
-            # Look for pain_phrases collections
-            pain_collections = [c for c in collection_names if 'buyer_language_1_0' in c.lower()]
-            if pain_collections:
-                collection_name = pain_collections[0]  # Use first found
-                logger.info(f"Using buyer_language_1_0 collection: {collection_name}")
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="No buyer_language_1_0 collection found in Qdrant. Please ensure company domain is configured."
-                )
-        company_enumerations = get_company_enumerations(company_details.company_name)
-        #retreive result from Vector Store for each pain signal and append to the json object
+        logger.info(f"✓ LLM response received: {len(llm_json_response)} chars")
 
 
-        # Process each item in the extraction result
+        logger.info("================= Step 4: process signals from JSON response =====================")
+        
+        items = llm_json_response.get('phrases')
+
+         # Process each item in the extraction result
         # Expected format: list of items with "classification" and "source_snippet"
-        items = extraction_result
-        if isinstance(extraction_result, dict):
-            # If it's a dict, try to find a list of items
-            items = extraction_result.get('items', extraction_result.get('results', [extraction_result]))
-        elif not isinstance(extraction_result, list):
-            items = [extraction_result]
+        #items = extraction_result
+        #if isinstance(extraction_result, dict):
+        #    # If it's a dict, try to find a list of items
+        #    items = extraction_result.get('items', extraction_result.get('results', [extraction_result]))
+        #elif not isinstance(extraction_result, list):
+        #    items = [extraction_result]
         
         # Build replacement map: source_snippet -> embedded_chunk
         replacement_map = {}
         modified_asset = request.original_asset
         logger.info(f"$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
-        for item in extraction_result:
+        for item in items:
             if not isinstance(item, dict):
                 continue
                 
             classification = item.get('classification', '')
-            if classification != 'pain_signal':
+            if classification != 'pain_signal' and classification != 'buyer_phrase':
                 continue
             
             source_snippet = item.get('source_snippet', '').strip()
@@ -1237,58 +1219,71 @@ async def get_recommendations(
                 logger.warning(f"Skipping item with empty source_snippet: {item}")
                 continue
             
-            logger.info(f"Searching Qdrant for pain phrase: {source_snippet[:50]}...")
-            
-            # Generate embedding for source_snippet
-            from openai import OpenAI
-            openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
-            embedding_response = openai_client.embeddings.create(
-                input=source_snippet,
-                model=vector_store._model_name
-            )
-            query_vector = embedding_response.data[0].embedding
-            
+            #search buyer_language that matches pain phrase
+            logger.info(f"Searching : {source_snippet}")
+            response = vector_store.search_doc_type(source_snippet, 3, "reddit_post", company_enumerations, collection_name, company_details.company_name)
+            logger.info(f"Response: {len(response) if response else 0} results")
+            if response and len(response) > 0:
+                # response is a list of ScoredPoint objects with payload and score attributes
+                for index, point in enumerate(response):
+                    # ScoredPoint has: payload (dict), score (float), id
+                    if point.score > 0.5 :
+                        payload = point.payload or {}
+                        # add the following fields to the item:
+                        item[f'signal_from_rag{index+1}'] = payload.get('embedded_text', '')
+                        item[f'match_score{index+1}'] = point.score
+                        item[f'doc_url{index+1}'] = payload.get('thread_url', '')
+                        
+                        # Process buyer_language if available
+                        buyer_language = payload.get('buyer_language', [])
+                        if buyer_language and isinstance(buyer_language, list):
+                            embedded_text = payload.get('embedded_text', '')
+                            for bl in buyer_language:
+                                if isinstance(bl, dict) and bl.get("buyer_language") == embedded_text:
+                                    item[f'cytation_from_rag{index+1}'] = bl.get("citation", '')
+                                    break
+                        break  # Use the first match above threshold
             # Search Qdrant
-            try:
+            #try:
                 # use search_doc_type() to retreive documents
                 # Note: search_doc_type returns a list of points, not a Qdrant response object
-                search_results = vector_store.search_doc_type(source_snippet, 1, "reddit_post", company_enumerations, collection_name, company_details.company_name)
                 
-                logger.info(f"source_snippet: {source_snippet}")
-                logger.info(f"Search results: {len(search_results) if isinstance(search_results, list) else 'N/A'} points")
-                logger.info("================================================")
-                if search_results and len(search_results) > 0:
-                    top_match = search_results[0]
-                    logger.info(f">>>>>>>Top match: {top_match}")
-                    # embedded_chunk can be embeded_chunk or embeded_chunk
-                    embedded_chunk = top_match.payload.get('embeded_chunk', '') if hasattr(top_match, 'payload') else ''
-                    if not embedded_chunk:
-                        embedded_chunk = top_match.payload.get('embedded_chunk', '') if hasattr(top_match, 'payload') else ''
+                #logger.info(f"source_snippet: {source_snippet}")
+                #logger.info(f"Search results: {len(search_results) if isinstance(search_results, list) else 'N/A'} points")
+                #logger.info("================================================")
+                #if search_results and len(search_results) > 0:
+                #    top_match = search_results[0]
+                #    logger.info(f">>>>>>>Top match: {top_match}")
+                    # embedded_chunk can be embedded_text or embedded_text
+                    #embedded_text = top_match.payload.get('embedded_text', '') if hasattr(top_match, 'payload') else ''
+                    #if not embedded_text:
+                    #    embedded_text = top_match.payload.get('embedded_text', '') if hasattr(top_match, 'payload') else ''
 
                     
-                    if embedded_chunk:
-                        replacement_map[source_snippet] = embedded_chunk
-                        logger.info(f"✓ Found replacement: '{source_snippet[:30]}...' -> '{embedded_chunk[:30]}...'")
-                    else:
-                        logger.warning(f"No embedded_chunk found in payload for: {source_snippet[:50]}")
-                else:
-                    logger.warning(f"No matches found in Qdrant for: {source_snippet[:50]}")
-            except Exception as e:
-                logger.error(f"Error searching Qdrant for '{source_snippet[:50]}': {e}", exc_info=True)
+                    #if embedded_text:
+                    #    replacement_map[source_snippet] = embedded_text
+                    #    logger.info(f"✓ Found replacement: '{source_snippet[:30]}...' -> '{embedded_chunk[:30]}...'")
+                    #else:
+                    #    logger.warning(f"No embedded_chunk found in payload for: {source_snippet[:50]}")
+                #else:
+                #    logger.warning(f"No matches found in Qdrant for: {source_snippet[:50]}")
+            #except Exception as e:
+            #    logger.error(f"Error searching Qdrant for '{source_snippet[:50]}': {e}", exc_info=True)
         
         # Step 6: Replace source_snippets with embedded_chunk in the original asset
-        logger.info(f"Replacing {len(replacement_map)} pain phrases in original asset...")
+        #logger.info(f"Replacing {len(replacement_map)} pain phrases in original asset...")
         
         # Sort replacements by length (longest first) to avoid partial replacements
-        sorted_replacements = sorted(replacement_map.items(), key=lambda x: len(x[0]), reverse=True)
+        #sorted_replacements = sorted(replacement_map.items(), key=lambda x: len(x[0]), reverse=True)
         
-        for source_snippet, embedded_chunk in sorted_replacements:
-            # Replace all occurrences
-            modified_asset = modified_asset.replace(source_snippet, embedded_chunk)
-            logger.debug(f"Replaced: '{source_snippet[:30]}...' with '{embedded_chunk[:30]}...'")
+        #for source_snippet, embedded_chunk in sorted_replacements:
+        #    # Replace all occurrences
+        #    modified_asset = modified_asset.replace(source_snippet, embedded_chunk)
+        #    logger.debug(f"Replaced: '{source_snippet[:30]}...' with '{embedded_chunk[:30]}...'")
         
         logger.info(f"✓ Asset Assistant pipeline completed successfully")
-        return RecommendationsResponse(modified_asset=modified_asset)
+        logger.info(f"Items: {items}")
+        return RecommendationsResponse(modified_asset=modified_asset, items=items)
         
     except HTTPException:
         raise

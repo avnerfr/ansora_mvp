@@ -46,6 +46,9 @@ function HomePageContent() {
   const [modifiedAsset, setModifiedAsset] = useState<string>('')
   const [isGettingRecommendations, setIsGettingRecommendations] = useState(false)
   const [modifiedAssetViewMode, setModifiedAssetViewMode] = useState<'edit' | 'diff'>('edit')
+  const [recommendationItems, setRecommendationItems] = useState<any[]>([])
+  const [hoveredItem, setHoveredItem] = useState<any | null>(null)
+  const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null)
 
   const COMPANY_OPTIONS = ['Algosec', 'CyberArk', 'JFrog', 'Cloudinary', 'Incredibuild']
 
@@ -427,6 +430,7 @@ function HomePageContent() {
         isAdminUser ? selectedCompany : undefined
       )
       setModifiedAsset(response.modified_asset || response.recommended_text || '')
+      setRecommendationItems(response.items || [])
     } catch (error: any) {
       console.error('Error getting recommendations:', error)
       alert(
@@ -436,6 +440,100 @@ function HomePageContent() {
     } finally {
       setIsGettingRecommendations(false)
     }
+  }
+
+  // Function to highlight source snippets in the original asset
+  const highlightSourceSnippets = (text: string, items: any[]): string => {
+    if (!items || items.length === 0) return text
+    
+    // Create array with original indices before sorting
+    const itemsWithOriginalIndex = items.map((item, originalIndex) => ({
+      item,
+      originalIndex
+    }))
+    
+    // Sort items by source_snippet length (longest first) to avoid partial matches
+    const sortedItems = [...itemsWithOriginalIndex].sort((a, b) => {
+      const aSnippet = a.item.source_snippet || ''
+      const bSnippet = b.item.source_snippet || ''
+      return bSnippet.length - aSnippet.length
+    })
+    
+    // Build array of ranges to highlight (start, end, originalItemIndex, item)
+    const ranges: Array<{start: number, end: number, originalItemIndex: number, item: any}> = []
+    const processedRanges: Array<{start: number, end: number}> = []
+    
+    // Process each item to find all matches
+    sortedItems.forEach(({ item, originalIndex }) => {
+      const sourceSnippet = item.source_snippet || ''
+      if (!sourceSnippet) return
+      
+      // Find all occurrences of the snippet in the text (case-insensitive)
+      const escapedSnippet = escapeRegExp(sourceSnippet)
+      const regex = new RegExp(escapedSnippet, 'gi')
+      const matches = [...text.matchAll(regex)]
+      
+      matches.forEach((match) => {
+        const startIndex = match.index!
+        const endIndex = startIndex + match[0].length
+        
+        // Check if this range overlaps with any already processed range
+        let overlaps = false
+        for (const processedRange of processedRanges) {
+          if (!(endIndex <= processedRange.start || startIndex >= processedRange.end)) {
+            overlaps = true
+            break
+          }
+        }
+        
+        if (!overlaps) {
+          ranges.push({ start: startIndex, end: endIndex, originalItemIndex: originalIndex, item })
+          processedRanges.push({ start: startIndex, end: endIndex })
+        }
+      })
+    })
+    
+    // Sort ranges by start position (descending) so we can replace from end to start
+    ranges.sort((a, b) => b.start - a.start)
+    
+    // Build highlighted text by replacing from end to start (to preserve indices)
+    let highlightedText = text
+    ranges.forEach(({ start, end, originalItemIndex, item }) => {
+      const sourceSnippet = item.source_snippet || ''
+      const matchedText = text.substring(start, end)
+      const isPainSignal = item.classification === 'pain_signal'
+      const bgColor = isPainSignal ? 'bg-blue-200' : 'bg-orange-200'
+      const itemId = `item-${originalItemIndex}-${start}`
+      
+      const highlight = `<span class="${bgColor} cursor-pointer hover:${bgColor.replace('200', '300')} relative highlight-span" data-item-index="${originalItemIndex}" data-item-id="${itemId}">${matchedText}</span>`
+      highlightedText = highlightedText.substring(0, start) + highlight + highlightedText.substring(end)
+    })
+    
+    return highlightedText
+  }
+
+  // Escape special regex characters
+  const escapeRegExp = (string: string): string => {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  // Handle mouse enter on highlighted text
+  const handleHighlightMouseEnter = (e: React.MouseEvent<HTMLSpanElement>, itemIndex: number) => {
+    const item = recommendationItems[itemIndex]
+    if (!item) return
+    
+    setHoveredItem(item)
+    const rect = e.currentTarget.getBoundingClientRect()
+    setTooltipPosition({
+      x: rect.left + rect.width / 2,
+      y: rect.top - 10
+    })
+  }
+
+  // Handle mouse leave
+  const handleHighlightMouseLeave = () => {
+    setHoveredItem(null)
+    setTooltipPosition(null)
   }
 
   const handleProcess = async () => {
@@ -808,79 +906,222 @@ function HomePageContent() {
           {/* Asset Assistant Tab */}
           {activeTab === 'assistant' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {/* Original Asset Box */}
-                <div className="bg-gray-100 rounded-lg border border-slate-200 p-4">
+              <div className="grid grid-cols-1 gap-4">
+                {/* Original Asset Box - Full Width */}
+                <div className="bg-gray-100 rounded-lg border border-slate-200 p-4 relative">
                   <h2 className="text-sm font-medium text-slate-900 mb-3">
                     Original Asset
                   </h2>
-                  <TextArea
-                    label=""
-                    rows={20}
-                    value={originalAsset}
-                    onChange={(e) => setOriginalAsset(e.target.value)}
-                    placeholder="Paste or type your original asset text here..."
-                    className="w-full"
-                  />
-                </div>
-
-                {/* Modified Asset Box */}
-                <div className="bg-gray-100 rounded-lg border border-slate-200 p-4">
-                  <h2 className="text-sm font-medium text-slate-900 mb-3">
-                    Modified Asset
-                  </h2>
-                  {modifiedAssetViewMode === 'edit' ? (
+                  {recommendationItems.length > 0 ? (
+                    <div 
+                      className="bg-white rounded border border-slate-300 p-3 min-h-[600px] max-h-[calc(100vh-250px)] overflow-y-auto text-sm text-slate-700 whitespace-pre-wrap"
+                      onMouseMove={(e) => {
+                        // Use event delegation to handle mouse events on dynamically inserted spans
+                        const target = e.target as HTMLElement
+                        if (target.classList.contains('highlight-span') || target.closest('.highlight-span')) {
+                          const span = target.classList.contains('highlight-span') ? target : target.closest('.highlight-span') as HTMLElement
+                          if (span) {
+                            const itemIndex = parseInt(span.getAttribute('data-item-index') || '0')
+                            const item = recommendationItems[itemIndex]
+                            if (item) {
+                              setHoveredItem(item)
+                              const rect = span.getBoundingClientRect()
+                              const containerRect = e.currentTarget.getBoundingClientRect()
+                              setTooltipPosition({
+                                x: rect.left + rect.width / 2 - containerRect.left,
+                                y: rect.top - containerRect.top - 10
+                              })
+                            }
+                          }
+                        } else {
+                          setHoveredItem(null)
+                          setTooltipPosition(null)
+                        }
+                      }}
+                      onMouseLeave={handleHighlightMouseLeave}
+                    >
+                      <div
+                        dangerouslySetInnerHTML={{
+                          __html: highlightSourceSnippets(originalAsset, recommendationItems)
+                        }}
+                      />
+                    </div>
+                  ) : (
                     <TextArea
                       label=""
                       rows={20}
-                      value={modifiedAsset}
-                      onChange={(e) => setModifiedAsset(e.target.value)}
-                      placeholder="Modified text will appear here after clicking 'Provide Recommendations', or you can type directly..."
+                      value={originalAsset}
+                      onChange={(e) => setOriginalAsset(e.target.value)}
+                      placeholder="Paste or type your original asset text here..."
                       className="w-full"
                     />
-                  ) : (
-                    <div className="bg-white rounded border border-slate-300 p-3 min-h-[400px] max-h-[500px] overflow-y-auto">
-                      {modifiedAsset && originalAsset ? (
-                        <div
-                          className="text-sm text-slate-700 whitespace-pre-wrap"
-                          dangerouslySetInnerHTML={{
-                            __html: highlightDifferences(originalAsset, modifiedAsset)
-                          }}
-                        />
-                      ) : (
-                        <p className="text-slate-400 text-sm">
-                          No content to display. Switch to Edit mode to add text.
-                        </p>
-                      )}
+                  )}
+                  
+                  {/* Tooltip */}
+                  {hoveredItem && tooltipPosition && (
+                    <div
+                      className="absolute z-50 bg-white border border-gray-300 rounded-lg shadow-lg p-4 max-w-sm pointer-events-auto"
+                      style={{
+                        left: `${tooltipPosition.x}px`,
+                        top: `${tooltipPosition.y}px`,
+                        transform: 'translate(-50%, -100%)',
+                        marginTop: '-8px'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.stopPropagation()
+                      }}
+                      onMouseLeave={handleHighlightMouseLeave}
+                    >
+                      <div className="text-xs space-y-2">
+                        <div>
+                          <span className="font-semibold">Classification:</span>{' '}
+                          <span className={hoveredItem.classification === 'pain_signal' ? 'text-blue-600' : 'text-orange-600'}>
+                            {hoveredItem.classification || 'N/A'}
+                          </span>
+                        </div>
+                        {hoveredItem.source_snippet && (
+                          <div>
+                            <span className="font-semibold">Source Snippet:</span>{' '}
+                            <span className="text-gray-700">{hoveredItem.source_snippet}</span>
+                          </div>
+                        )}
+
+                        {/* Signals from RAG (up to 3 matches) */}
+                        {[1, 2, 3].map((i) => {
+                          const signal = (hoveredItem as any)[`signal_from_rag${i}`]
+                          if (!signal) return null
+
+                          const score = (hoveredItem as any)[`match_score${i}`]
+                          const url = (hoveredItem as any)[`doc_url${i}`]
+                          const citation = (hoveredItem as any)[`cytation_from_rag${i}`]
+
+                          return (
+                            <div key={`rag-block-${i}`} className="border-t border-slate-200 pt-2 mt-2">
+                              <div>
+                                <span className="font-semibold">Signal from RAG #{i}:</span>{' '}
+                                <span className="text-gray-700">{signal}</span>
+                              </div>
+                              {typeof score === 'number' && (
+                                <div>
+                                  <span className="font-semibold">Match Score #{i}:</span>{' '}
+                                  <span className="text-gray-700">{score.toFixed(2)}</span>
+                                </div>
+                              )}
+                              {url && (
+                                <div>
+                                  <span className="font-semibold">Source URL #{i}:</span>{' '}
+                                  <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                                    View Source
+                                  </a>
+                                </div>
+                              )}
+                              {citation && (
+                                <div>
+                                  <span className="font-semibold">Citation from RAG #{i}:</span>{' '}
+                                  <span className="text-gray-700">{citation}</span>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+
+                        {/* Show any other fields that aren't part of the RAG metadata */}
+                        {Object.entries(hoveredItem).map(([key, value]) => {
+                          if (
+                            [
+                              'classification',
+                              'source_snippet',
+                              // RAG-specific fields (1..3)
+                              'signal_from_rag1',
+                              'signal_from_rag2',
+                              'signal_from_rag3',
+                              'match_score1',
+                              'match_score2',
+                              'match_score3',
+                              'doc_url1',
+                              'doc_url2',
+                              'doc_url3',
+                              'cytation_from_rag1',
+                              'cytation_from_rag2',
+                              'cytation_from_rag3'
+                            ].includes(key)
+                          ) {
+                            return null
+                          }
+                          if (value === null || value === undefined || value === '') {
+                            return null
+                          }
+                          return (
+                            <div key={key}>
+                              <span className="font-semibold">{key.replace(/_/g, ' ')}:</span>{' '}
+                              <span className="text-gray-700">{String(value)}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
-                  {/* Toggle buttons at the bottom */}
-                  <div className="mt-3 flex justify-end space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => setModifiedAssetViewMode('edit')}
-                      className={`px-3 py-1.5 text-xs font-medium rounded ${
-                        modifiedAssetViewMode === 'edit'
-                          ? 'bg-primary-600 text-white'
-                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
-                    >
-                      Modify
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setModifiedAssetViewMode('diff')}
-                      className={`px-3 py-1.5 text-xs font-medium rounded ${
-                        modifiedAssetViewMode === 'diff'
-                          ? 'bg-primary-600 text-white'
-                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
-                      disabled={!modifiedAsset || !originalAsset}
-                    >
-                      View Diff
-                    </button>
-                  </div>
                 </div>
+
+                {/* Modified Asset Box - Temporarily Hidden */}
+                {false && (
+                  <div className="bg-gray-100 rounded-lg border border-slate-200 p-4">
+                    <h2 className="text-sm font-medium text-slate-900 mb-3">
+                      Modified Asset
+                    </h2>
+                    {modifiedAssetViewMode === 'edit' ? (
+                      <TextArea
+                        label=""
+                        rows={20}
+                        value={modifiedAsset}
+                        onChange={(e) => setModifiedAsset(e.target.value)}
+                        placeholder="Modified text will appear here after clicking 'Provide Recommendations', or you can type directly..."
+                        className="w-full"
+                      />
+                    ) : (
+                      <div className="bg-white rounded border border-slate-300 p-3 min-h-[400px] max-h-[500px] overflow-y-auto">
+                        {modifiedAsset && originalAsset ? (
+                          <div
+                            className="text-sm text-slate-700 whitespace-pre-wrap"
+                            dangerouslySetInnerHTML={{
+                              __html: highlightDifferences(originalAsset, modifiedAsset)
+                            }}
+                          />
+                        ) : (
+                          <p className="text-slate-400 text-sm">
+                            No content to display. Switch to Edit mode to add text.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {/* Toggle buttons at the bottom */}
+                    <div className="mt-3 flex justify-end space-x-2">
+                      <button
+                        type="button"
+                        onClick={() => setModifiedAssetViewMode('edit')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded ${
+                          modifiedAssetViewMode === 'edit'
+                            ? 'bg-primary-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                      >
+                        Modify
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setModifiedAssetViewMode('diff')}
+                        className={`px-3 py-1.5 text-xs font-medium rounded ${
+                          modifiedAssetViewMode === 'diff'
+                            ? 'bg-primary-600 text-white'
+                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                        disabled={!modifiedAsset || !originalAsset}
+                      >
+                        View Diff
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Provide Recommendations Button */}

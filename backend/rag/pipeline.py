@@ -673,8 +673,11 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
 
+
         combined_docs = reddit_filtered_docs + youtube_filtered_docs + podcast_filtered_docs
         combined_docs = sorted(combined_docs, key=lambda x: x.metadata.get('score', 0), reverse=True)
+
+        logger.info(f">>>>>>>>>>>>>>>>>>>>>combined_docs count: {len(combined_docs)}")
         
         for doc in combined_docs:
             doc_type = doc.metadata.get('doc_type', '')
@@ -774,17 +777,41 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
             if not isinstance(implicit_risks, list):
                 implicit_risks = [implicit_risks] if implicit_risks and str(implicit_risks).strip() else []
             # Create comprehensive context excerpt from RAG metadata
+            def safe_join(items, default=""):
+                """Safely join items, handling both strings and dictionaries"""
+                if not items:
+                    return default
+                if isinstance(items, list):
+                    # Convert each item to string, handling dicts
+                    str_items = []
+                    for item in items:
+                        if isinstance(item, dict):
+                            # For dicts, try to get a meaningful string representation
+                            if 'buyer_language' in item:
+                                str_items.append(str(item.get('buyer_language', '')))
+                            elif 'phrase' in item:
+                                str_items.append(str(item.get('phrase', '')))
+                            elif 'text' in item:
+                                str_items.append(str(item.get('text', '')))
+                            else:
+                                str_items.append(str(item))
+                        else:
+                            str_items.append(str(item))
+                    return ', '.join(str_items)
+                else:
+                    return str(items)
+            
             context_parts = []
             if key_issues and (isinstance(key_issues, list) and key_issues or str(key_issues).strip()):
-                context_parts.append(f"Key Issues: {', '.join(key_issues) if isinstance(key_issues, list) else str(key_issues)}")
+                context_parts.append(f"Key Issues: {safe_join(key_issues)}")
             if pain_phrases and (isinstance(pain_phrases, list) and pain_phrases or str(pain_phrases).strip()):
-                context_parts.append(f"Pain Phrases: {', '.join(pain_phrases) if isinstance(pain_phrases, list) else str(pain_phrases)}")
+                context_parts.append(f"Pain Phrases: {safe_join(pain_phrases)}")
             if emotional_triggers and (isinstance(emotional_triggers, list) and emotional_triggers or str(emotional_triggers).strip()):
-                context_parts.append(f"Emotional Triggers: {', '.join(emotional_triggers) if isinstance(emotional_triggers, list) else str(emotional_triggers)}")
+                context_parts.append(f"Emotional Triggers: {safe_join(emotional_triggers)}")
             if buyer_language and (isinstance(buyer_language, list) and buyer_language or str(buyer_language).strip()):
-                context_parts.append(f"Buyer Language: {', '.join(buyer_language) if isinstance(buyer_language, list) else str(buyer_language)}")
+                context_parts.append(f"Buyer Language: {safe_join(buyer_language)}")
             if implicit_risks and (isinstance(implicit_risks, list) and implicit_risks or str(implicit_risks).strip()):
-                context_parts.append(f"Implicit Risks: {', '.join(implicit_risks) if isinstance(implicit_risks, list) else str(implicit_risks)}")
+                context_parts.append(f"Implicit Risks: {safe_join(implicit_risks)}")
 
             context_excerpt = " | ".join(context_parts) if context_parts else (citation[:500] if citation else "No context available")
 
