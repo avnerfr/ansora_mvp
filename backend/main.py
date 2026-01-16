@@ -47,6 +47,11 @@ origins = [
     if origin.strip()
 ]
 
+# Ensure production frontend URL is always included
+production_origin = "https://ansora-mvp.vercel.app"
+if production_origin not in origins:
+    origins.append(production_origin)
+
 # Debug logging
 import logging
 import json

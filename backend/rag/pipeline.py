@@ -19,6 +19,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import base64
 from decimal import Decimal
+from openai import OpenAI
+import httpx
 #from google.auth.transport.requests import Request
 #from google.oauth2.credentials import Credentials
 #from googleapiclient.discovery import build
@@ -659,14 +661,76 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
             else:
                 retrieval_query_chunks.append(line) 
 
-
-        for chunk in retrieval_query_chunks:
-            logger.info(f"-------------------Searching for chunk------------------------")
-            logger.info(f"{chunk}")
-            logger.info(f"--------------------------------------------------------------")
-            reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
-            youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
-            podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
+        # retreive all documents in parallel
+        import asyncio
+        
+        # The search functions are synchronous, so we need to run them in threads
+        # Create tasks for each document type using asyncio.to_thread for parallel execution
+        reddit_tasks = [
+            asyncio.to_thread(
+                vector_store.search_reddit_posts,
+                chunk, 10, company_enumerations, collection_name, company_name
+            )
+            for chunk in retrieval_query_chunks
+        ]
+        youtube_tasks = [
+            asyncio.to_thread(
+                vector_store.search_youtube_summaries,
+                chunk, 3, company_enumerations, collection_name, company_name
+            )
+            for chunk in retrieval_query_chunks
+        ]
+        podcast_tasks = [
+            asyncio.to_thread(
+                vector_store.search_podcast_summaries,
+                chunk, 3, company_enumerations, collection_name, company_name
+            )
+            for chunk in retrieval_query_chunks
+        ]
+        
+        # Execute all tasks in parallel
+        all_tasks = reddit_tasks + youtube_tasks + podcast_tasks
+        results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        
+        # Separate results by type
+        num_chunks = len(retrieval_query_chunks)
+        reddit_results = results[:num_chunks]
+        youtube_results = results[num_chunks:2*num_chunks]
+        podcast_results = results[2*num_chunks:]
+        
+        # Process reddit results
+        for result in reddit_results:
+            if isinstance(result, Exception):
+                logger.error(f"Error retrieving Reddit documents: {result}")
+                continue
+            if result:
+                reddit_docs.extend(result)
+        
+        # Process youtube results
+        for result in youtube_results:
+            if isinstance(result, Exception):
+                logger.error(f"Error retrieving YouTube documents: {result}")
+                continue
+            if result:
+                youtube_docs.extend(result)
+        
+        # Process podcast results
+        for result in podcast_results:
+            if isinstance(result, Exception):
+                logger.error(f"Error retrieving Podcast documents: {result}")
+                continue
+            if result:
+                podcast_docs.extend(result)
+        
+        logger.info(f"✓ Parallel extraction completed: {len(reddit_docs)} Reddit, {len(youtube_docs)} YouTube, {len(podcast_docs)} Podcast documents")
+        
+        #for chunk in retrieval_query_chunks:
+        #    logger.info(f"-------------------Searching for chunk------------------------")
+        #    logger.info(f"{chunk}")
+        #    logger.info(f"--------------------------------------------------------------")
+        #    reddit_docs.extend(vector_store.search_reddit_posts(chunk, k=10, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
+        #    youtube_docs.extend(vector_store.search_youtube_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
+        #    podcast_docs.extend(vector_store.search_podcast_summaries(chunk, k=3, company_enumerations=company_enumerations, collection_name=collection_name, company_name=company_name))
             
  
         # For Reddit, use post_id if available, otherwise fall back to url
@@ -950,6 +1014,163 @@ async def rerank_and_filter_documents(
         return [], "", ""
     
     try:
+        temp_query = """
+   
+        How directly does this insight map to one or more
+        of the RETRIEVAL ANCHOR sentences?
+
+        Rank highest insights that:
+        - Clearly exemplify the same operational situation
+        - Describe the same type of failure, blind spot, or friction
+        - Could serve as a concrete explanation or illustration
+        of a retrieval sentence
+
+        Down-rank insights that:
+        - Are generally related to the domain
+        - But do not clearly align with any retrieval sentence
+        - Introduce adjacent or parallel problems
+
+        ------------------------------------------------
+        2. OPERATIONAL EXPLANATORY POWER
+        ------------------------------------------------
+
+        Prefer insights that:
+        - Explain why the operational pain occurs
+        - Describe a concrete breakdown in tools, visibility, or workflow
+        - Make the pain feel inevitable or familiar to practitioners
+
+        Lower rank if:
+        - The insight is technically interesting but tangential
+        - The failure mode is unclear or abstract
+
+        ------------------------------------------------
+        3. ASSET USABILITY
+        ------------------------------------------------
+
+        How easily can this insight be turned into the requested asset?
+
+        High-ranking insights:
+        - Contain a clear expectation → reality gap
+        - Include decision tension, confusion, or repeated friction
+        - Can naturally support:
+        - an email hook
+        - a “whether / or” dilemma
+        - a systemic operational consequence
+
+        Lower rank if:
+        - The insight would require heavy interpretation
+        - It lacks narrative or emotional pull
+
+        ------------------------------------------------
+        4. BUYER LANGUAGE QUALITY
+        ------------------------------------------------
+
+        Prefer insights that:
+        - Use natural, peer-level practitioner language
+        - Include phrases that sound like internal troubleshooting talk
+        - Can be paraphrased directly into the asset
+
+        Down-rank insights that:
+        - Sound academic, summarized, or detached
+        - Lack distinctive phrasing
+
+        ------------------------------------------------
+        5. ICP & CONTEXT FIT
+        ------------------------------------------------
+
+        Prefer insights that clearly map to:
+        - The target audience’s day-to-day responsibilities
+        - Their tooling layer (e.g. firewalls, cloud controls, k8s, logs)
+        - Their accountability during incidents or audits
+       
+        
+        
+        """
+ 
+
+        #openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
+        reranker_model = "Qwen/Qwen3-Reranker-0.6B"
+        url = f"https://api.deepinfra.com/v1/inference/{reranker_model}"
+        headers = {
+            "Authorization": f"Bearer {settings.DEEPINFRA_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # Convert documents to strings for reranker API
+        # The reranker expects documents as a list of strings
+        document_strings = []
+        for doc in retrieved_docs:
+            if isinstance(doc, dict):
+                # Already cleaned format - extract summary or build from available fields
+                summary = doc.get('summary', '')
+                if not summary:
+                    # Build summary from available fields if summary is missing
+                    parts = []
+                    if doc.get('title'):
+                        parts.append(f"Title: {doc.get('title')}")
+                    if doc.get('citation'):
+                        parts.append(f"Citation: {doc.get('citation')}")
+                    if doc.get('key_issues'):
+                        key_issues = doc.get('key_issues')
+                        if isinstance(key_issues, list):
+                            parts.append(f"Key Issues: {', '.join(key_issues)}")
+                        elif key_issues:
+                            parts.append(f"Key Issues: {key_issues}")
+                    summary = ' | '.join(parts) if parts else str(doc)
+                document_strings.append(summary)
+            elif hasattr(doc, 'metadata') and doc.metadata:
+                # Extract summary from metadata
+                summary = doc.metadata.get('summary', '')
+                if not summary:
+                    # Build summary from available fields if summary is missing
+                    parts = []
+                    if doc.metadata.get('title'):
+                        parts.append(f"Title: {doc.metadata.get('title')}")
+                    if doc.metadata.get('citation'):
+                        parts.append(f"Citation: {doc.metadata.get('citation')}")
+                    if doc.metadata.get('key_issues'):
+                        key_issues = doc.metadata.get('key_issues')
+                        if isinstance(key_issues, list):
+                            parts.append(f"Key Issues: {', '.join(key_issues)}")
+                        elif key_issues:
+                            parts.append(f"Key Issues: {key_issues}")
+                    summary = ' | '.join(parts) if parts else getattr(doc, 'page_content', '')
+                document_strings.append(summary)
+            else:
+                # Fallback: use string representation
+                document_strings.append(str(doc))
+        
+        payload = {
+            "queries": [temp_query],
+            "documents": document_strings
+        }
+
+        # Make the API call (use AsyncClient for async function)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        
+        # 4. Process and print the reranked results
+        scores = data.get("scores", [])
+        if not scores:
+            print("No scores returned from API")
+            print(f"Full response: {json.dumps(data, indent=2)}")
+        else:
+            # Pair documents with scores and sort by score
+            doc_scores = list(zip(retrieved_docs, scores))
+            doc_scores.sort(key=lambda x: x[1], reverse=True)
+
+            # Extract just the documents (first element of each tuple) and return them
+            filtered_docs = [doc for doc, score in doc_scores]
+            logger.info(f"✓ Reranked {len(filtered_docs)} documents using Qwen3-Reranker")
+            return filtered_docs, temp_query, json.dumps(data, indent=2)
+    except Exception as e:
+        logger.error(f"Error reranking documents: {type(e).__name__}: {str(e)}")
+        return [], "", ""
+
+
+        
         # Get the reranking template from DynamoDB
         rerank_template_data = get_latest_prompt_template('results_rerank_and_filter_template')
         
@@ -1012,7 +1233,9 @@ async def rerank_and_filter_documents(
             temperature=0.3,  # Lower temperature for more focused filtering
         )
         logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@rerank_prompt@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@") 
-        logger.info(f"rerank_prompt: {rerank_prompt}")
+        for entry in retrieved_docs:
+            logger.info(f""" "{entry}",""")
+            logger.info("=============================")
         logger.info(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
         
@@ -1359,6 +1582,7 @@ def clean_documents_for_reranking(retrieved_docs: List[Any]) -> List[Dict[str, A
             cleaned_doc = {
                 "title": metadata.get('title', ''),
                 "citation": metadata.get('citation', ''),
+                "summary": metadata.get('summary', ''),  # Include summary field
                 "key_issues": metadata.get('key_issues', ''),
                 "pain_phrases": metadata.get('pain_phrases', ''),
                 "emotional_triggers": metadata.get('emotional_triggers', ''),
@@ -1393,6 +1617,7 @@ def clean_documents_for_reranking(retrieved_docs: List[Any]) -> List[Dict[str, A
             cleaned_doc = {
                 "title": metadata.get('title', ''),
                 "citation": metadata.get('citation', ''),
+                "summary": metadata.get('summary', ''),  # Include summary field
                 "key_issues": metadata.get('key_issues', ''),
                 "pain_phrases": metadata.get('pain_phrases', ''),
                 "emotional_triggers": metadata.get('emotional_triggers', ''),
@@ -1450,6 +1675,7 @@ def build_vector_search_context(retrieved_docs: List[Any]) -> str:
                 doc_context = {
                     "title": doc.metadata.get('title', ''),
                     "citation": doc.metadata.get('citation', ''),
+                    "summary": doc.metadata.get('summary', ''),  # Include summary field
                     "key_issues": doc.metadata.get('key_issues', ''),
                     "pain_phrases": doc.metadata.get('pain_phrases', ''),
                     "emotional_triggers": doc.metadata.get('emotional_triggers', ''),

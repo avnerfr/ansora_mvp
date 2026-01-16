@@ -60,7 +60,7 @@ class Settings:
         )
     )
     QDRANT_API_KEY: str = field(default_factory=lambda: os.getenv("QDRANT_API_KEY", ""))
-    ALLOWED_ORIGINS: str = field(default_factory=lambda: os.getenv("ALLOWED_ORIGINS", "http://localhost:3000"))
+    ALLOWED_ORIGINS: str = field(default_factory=lambda: os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,https://ansora-mvp.vercel.app"))
     STORAGE_PATH: str = field(default_factory=lambda: os.getenv("STORAGE_PATH", "./storage"))
     # Cognito configuration for JWT verification
     COGNITO_REGION: str = field(default_factory=lambda: os.getenv("COGNITO_REGION", "us-east-1"))
