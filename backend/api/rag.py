@@ -21,7 +21,7 @@ from core.auth import get_current_user, get_cognito_groups_from_token
 from rag.pipeline import process_rag, _load_asset_type_rules_from_dynamodb
 from rag.loader import load_document
 from rag.agents import company_analysis_agent
-from rag.s3_utils import get_latest_company_file, save_company_file, get_company_website, get_company_enumerations
+from rag.s3_utils import get_company_data_manager, get_company_website
 from rag.dynamodb_prompts import get_latest_prompt_template
 import re
 from core.config import settings
@@ -417,8 +417,9 @@ async def get_company_data(
         Dict with target_audience and operational_pains arrays
     """
     try:
-        # Get company details from S3 as CompanyDetails object
-        company_details = get_latest_company_file(company_name)
+        # Get company details from S3 as CompanyDetails object (using cached data)
+        company_data_manager = get_company_data_manager()
+        company_details = company_data_manager.get_company_data(company_name)
         
         if not company_details:
             logger.warning(f"No company information found for {company_name}, returning defaults")
@@ -525,8 +526,9 @@ async def get_competitors(
         Dict with competitors array
     """
     try:
-        # Get company details from S3
-        company_details = get_latest_company_file(company_name)
+        # Get company details from S3 (using cached data)
+        company_data_manager = get_company_data_manager()
+        company_details = company_data_manager.get_company_data(company_name)
         
         if not company_details:
             logger.warning(f"No company information found for {company_name}")
@@ -598,17 +600,18 @@ async def process_battle_cards(
             company_name = company_groups[0]
             logger.info(f"Using company from Cognito groups: {company_name}")
     
-    # Get company details
+    # Get company details (using cached data)
     company_details = None
     if company_name:
-        company_details = get_latest_company_file(company_name)
+        company_data_manager = get_company_data_manager()
+        company_details = company_data_manager.get_company_data(company_name)
         if not company_details:
             logger.info(f"Generating new company information for {company_name}")
             company_website = get_company_website(company_name)
             try:
                 company_analysis = company_analysis_agent(company_name, company_website)
-                save_company_file(company_name, company_analysis)
-                company_details = get_latest_company_file(company_name)
+                company_data_manager.save_company_file(company_name, company_analysis)
+                company_details = company_data_manager.get_company_data(company_name)
             except Exception as e:
                 logger.error(f"Error generating company information: {e}")
     
@@ -1119,7 +1122,8 @@ def get_domain_and_company_enumerations(credentials: HTTPAuthorizationCredential
     
     # Resolve collection name
     collection_name = vector_store.resolve_collection_name(domain, "buyer_language_1_0")
-    company_enumerations = get_company_enumerations(company_details.company_name)
+    company_data_manager = get_company_data_manager()
+    company_enumerations = company_data_manager.get_company_enumerations(company_details.company_name)
     return domain, company_enumerations, collection_name, company_details
 
 

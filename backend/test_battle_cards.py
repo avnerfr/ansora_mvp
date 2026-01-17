@@ -22,7 +22,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from rag.dynamodb_prompts import get_latest_prompt_template
-from rag.s3_utils import get_latest_company_file
+from rag.s3_utils import get_company_data_manager
 
 # DynamoDB setup
 AWS_REGION = os.getenv('AWS_REGION', os.getenv('AWS_DEFAULT_REGION', 'us-east-1'))
@@ -124,7 +124,8 @@ def test_competitors_loading(company_name='Algosec'):
     print("="*80)
     
     try:
-        company_details = get_latest_company_file(company_name)
+        company_data_manager = get_company_data_manager()
+        company_details = company_data_manager.get_company_data(company_name)
         
         if not company_details:
             print(f"❌ No company details found for {company_name}")

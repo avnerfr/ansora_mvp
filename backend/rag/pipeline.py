@@ -4,7 +4,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 from rag.vectorstore import vector_store
 from rag import s3_utils
-from rag.s3_utils import CompanyDetails, get_company_enumerations
+from rag.s3_utils import CompanyDetails, get_company_data_manager
 from core.config import settings
 from typing import List, Dict, Any, Optional
 import logging
@@ -669,7 +669,7 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
         reddit_tasks = [
             asyncio.to_thread(
                 vector_store.search_reddit_posts,
-                chunk, 10, company_enumerations, collection_name, company_name
+                chunk, 20, company_enumerations, collection_name, company_name
             )
             for chunk in retrieval_query_chunks
         ]
@@ -738,7 +738,7 @@ async def retrieve_rag_documents(retrieval_query: str, company_enumerations: Lis
         use_post_id = any(hasattr(doc, 'metadata') and doc.metadata.get('post_id') for doc in reddit_docs[:5]) if reddit_docs else False
         merger_field = "post_id" if use_post_id else "url"
 
-        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, merger_field, 10)    #extract a vector of json from the reddit_docs
+        reddit_filtered_docs = merge_and_filter_duplicate_documents(reddit_docs, merger_field, 20)    #extract a vector of json from the reddit_docs
         youtube_filtered_docs = merge_and_filter_duplicate_documents(youtube_docs, "url",3)    #extract a vector of json from the youtube_docs
         podcast_filtered_docs = merge_and_filter_duplicate_documents(podcast_docs, "episode_url",3)    #extract a vector of json from the podcast_docs
 
@@ -987,7 +987,9 @@ async def rerank_and_filter_documents(
     retrieval_queries: str,
     company_name: str | None = None,
     company_domain: str | None = None,
-    known_competitors: List[str] | None = None
+    known_competitors: List[str] | None = None,
+    backgrounds: List[str] | None = None,
+    icp: str | None = None
 ) -> tuple[List[Any], str, str]:
     """
     Rerank and filter retrieved documents using LLM to keep only relevant ones.
@@ -998,7 +1000,8 @@ async def rerank_and_filter_documents(
         company_name: Company name
         company_domain: Company domain
         known_competitors: List of known competitors
-    
+        backgrounds: List of backgrounds
+        icp: Target audience
     Returns:
         tuple: (filtered_docs, rerank_prompt, rerank_result)
             - filtered_docs: List of filtered documents (subset of retrieved_docs)
@@ -1014,79 +1017,16 @@ async def rerank_and_filter_documents(
         return [], "", ""
     
     try:
-        temp_query = """
-   
-        How directly does this insight map to one or more
-        of the RETRIEVAL ANCHOR sentences?
+        company_data_manager = get_company_data_manager()
+        company_information = company_data_manager.get_company_context(company_name)["company_information"]
+        rerank_template = get_latest_prompt_template('results_rerank_and_filter_template')['template_body']
+        rerank_prompt = rerank_template.format(
+            operational_pain_point = backgrounds,
+            target_audience = icp,
+            company_background = company_information.self_described_positioning
+        )
 
-        Rank highest insights that:
-        - Clearly exemplify the same operational situation
-        - Describe the same type of failure, blind spot, or friction
-        - Could serve as a concrete explanation or illustration
-        of a retrieval sentence
-
-        Down-rank insights that:
-        - Are generally related to the domain
-        - But do not clearly align with any retrieval sentence
-        - Introduce adjacent or parallel problems
-
-        ------------------------------------------------
-        2. OPERATIONAL EXPLANATORY POWER
-        ------------------------------------------------
-
-        Prefer insights that:
-        - Explain why the operational pain occurs
-        - Describe a concrete breakdown in tools, visibility, or workflow
-        - Make the pain feel inevitable or familiar to practitioners
-
-        Lower rank if:
-        - The insight is technically interesting but tangential
-        - The failure mode is unclear or abstract
-
-        ------------------------------------------------
-        3. ASSET USABILITY
-        ------------------------------------------------
-
-        How easily can this insight be turned into the requested asset?
-
-        High-ranking insights:
-        - Contain a clear expectation → reality gap
-        - Include decision tension, confusion, or repeated friction
-        - Can naturally support:
-        - an email hook
-        - a “whether / or” dilemma
-        - a systemic operational consequence
-
-        Lower rank if:
-        - The insight would require heavy interpretation
-        - It lacks narrative or emotional pull
-
-        ------------------------------------------------
-        4. BUYER LANGUAGE QUALITY
-        ------------------------------------------------
-
-        Prefer insights that:
-        - Use natural, peer-level practitioner language
-        - Include phrases that sound like internal troubleshooting talk
-        - Can be paraphrased directly into the asset
-
-        Down-rank insights that:
-        - Sound academic, summarized, or detached
-        - Lack distinctive phrasing
-
-        ------------------------------------------------
-        5. ICP & CONTEXT FIT
-        ------------------------------------------------
-
-        Prefer insights that clearly map to:
-        - The target audience’s day-to-day responsibilities
-        - Their tooling layer (e.g. firewalls, cloud controls, k8s, logs)
-        - Their accountability during incidents or audits
-       
-        
-        
-        """
- 
+        logger.info(f"Reranking prompt: {rerank_prompt}")
 
         #openai_client = OpenAI(api_key=settings.DEEPINFRA_API_KEY, base_url=settings.DEEPINFRA_API_BASE_URL)
         reranker_model = "Qwen/Qwen3-Reranker-0.6B"
@@ -1141,7 +1081,7 @@ async def rerank_and_filter_documents(
                 document_strings.append(str(doc))
         
         payload = {
-            "queries": [temp_query],
+            "queries": [rerank_prompt],
             "documents": document_strings
         }
 
@@ -1164,7 +1104,7 @@ async def rerank_and_filter_documents(
             # Extract just the documents (first element of each tuple) and return them
             filtered_docs = [doc for doc, score in doc_scores]
             logger.info(f"✓ Reranked {len(filtered_docs)} documents using Qwen3-Reranker")
-            return filtered_docs, temp_query, json.dumps(data, indent=2)
+            return filtered_docs, rerank_prompt, json.dumps(data, indent=2)
     except Exception as e:
         logger.error(f"Error reranking documents: {type(e).__name__}: {str(e)}")
         return [], "", ""
@@ -1355,7 +1295,7 @@ async def rerank_and_filter_battle_cards(
     icp: str | None = None
 ) -> tuple[List[Any], str, str]:
     """
-    Rerank and filter battle cards documents using LLM with battle-cards-specific template.
+    Rerank and filter battle cards documents using Qwen3-Reranker model with battle-cards-specific template.
     
     Args:
         retrieved_docs: List of retrieved documents from RAG
@@ -1369,6 +1309,7 @@ async def rerank_and_filter_battle_cards(
         tuple: (filtered_docs, rerank_prompt, rerank_result)
     """
     from .dynamodb_prompts import get_latest_prompt_template
+    import httpx
     
     logger.info("============== Step 2.5. Reranking and filtering battle cards documents ================")
     
@@ -1377,6 +1318,10 @@ async def rerank_and_filter_battle_cards(
         return [], "", ""
     
     try:
+        # Get company information for the rerank prompt
+        company_data_manager = get_company_data_manager()
+        company_information = company_data_manager.get_company_context(company_name)["company_information"]
+        
         # Get the battle cards specific reranking template from DynamoDB
         rerank_template_data = get_latest_prompt_template('results_rerank_and_filter_battle_cards_template')
         
@@ -1387,39 +1332,18 @@ async def rerank_and_filter_battle_cards(
         rerank_template = rerank_template_data['template_body']
         logger.info(f"✓ Loaded results_rerank_and_filter_battle_cards_template from DynamoDB (edited by: {rerank_template_data.get('edited_by_sub', 'unknown')})")
         
-        # Format retrieved docs as JSON string (candidates)
-        # Retrieved docs are now cleaned dicts with only relevant fields
-        candidates = []
-        for i, doc in enumerate(retrieved_docs, 1):
-            if isinstance(doc, dict):
-                # Already cleaned format - just add ID
-                doc_with_id = {'id': i, **doc}
-                candidates.append(doc_with_id)
-            else:
-                # Fallback for full document objects (shouldn't happen after cleaning)
-                doc_dict = {
-                    'id': i,
-                    'content': getattr(doc, 'page_content', ''),
-                    'metadata': getattr(doc, 'metadata', {})
-                }
-                candidates.append(doc_dict)
-        
-        candidates_json = json.dumps(candidates, indent=2)
-        
-        logger.info(f"Reranking {len(candidates)} battle cards documents...")
-        logger.info(f"Input size: {len(candidates_json)} chars, {count_tokens(candidates_json)} tokens")
-        
         # Prepare battle-cards-specific template variables
         known_competitors_str = ", ".join(known_competitors) if known_competitors else ""
         template_vars = {
             'company_name': company_name or '',
             'company_domain': company_domain or '',
+            'company_information': company_information.self_described_positioning if company_information else '',
             'knwn_compatitors': known_competitors_str,  # Note: keeping the typo from user's spec
             'known_competitors': known_competitors_str,  # Also provide correct spelling
             'target_competitor': target_competitor or '',
             'icp': icp or '',
             'target_audience': icp or '',  # Alias
-            'candidates': candidates_json
+            'domain': company_information.company_domain if company_information else (company_domain or '')
         }
         
         # Format the prompt with safe substitution
@@ -1433,130 +1357,92 @@ async def rerank_and_filter_battle_cards(
             template_obj = Template(template_str)
             rerank_prompt = template_obj.safe_substitute(**template_vars)
         
-        # Run LLM to filter documents
-        llm = ChatOpenAI(
-            model_name="deepseek-ai/DeepSeek-V3",
-            openai_api_key=settings.DEEPINFRA_API_KEY,
-            base_url=settings.DEEPINFRA_API_BASE_URL,
-            temperature=0.3,  # Lower temperature for more focused filtering
-        )
+        logger.info(f"Battle cards reranking prompt: {rerank_prompt}")
         
-        logger.info("Running battle cards reranking model...")
-        messages = [HumanMessage(content=rerank_prompt)]
-        response = await llm.ainvoke(messages)
-        filtered_result = response.content
+        # Use the same reranker model as the main pipeline
+        reranker_model = "Qwen/Qwen3-Reranker-0.6B"
+        url = f"https://api.deepinfra.com/v1/inference/{reranker_model}"
+        headers = {
+            "Authorization": f"Bearer {settings.DEEPINFRA_API_KEY}",
+            "Content-Type": "application/json"
+        }
         
-        logger.info(f"✓ Battle cards reranking completed: {len(filtered_result)} chars")
-
-        logger.info(f"---------------------------------------------------------------------------------")
-        logger.info(f"Battle cards reranking result: ")
-        logger.info(f"{filtered_result}")
-        logger.info(f"---------------------------------------------------------------------------------")
+        # Convert documents to strings for reranker API
+        # The reranker expects documents as a list of strings
+        document_strings = []
+        for doc in retrieved_docs:
+            if isinstance(doc, dict):
+                # Already cleaned format - extract summary or build from available fields
+                summary = doc.get('summary', '')
+                if not summary:
+                    # Build summary from available fields if summary is missing
+                    parts = []
+                    if doc.get('title'):
+                        parts.append(f"Title: {doc.get('title')}")
+                    if doc.get('citation'):
+                        parts.append(f"Citation: {doc.get('citation')}")
+                    if doc.get('key_issues'):
+                        key_issues = doc.get('key_issues')
+                        if isinstance(key_issues, list):
+                            parts.append(f"Key Issues: {', '.join(key_issues)}")
+                        elif key_issues:
+                            parts.append(f"Key Issues: {key_issues}")
+                    summary = ' | '.join(parts) if parts else str(doc)
+                document_strings.append(summary)
+            elif hasattr(doc, 'metadata') and doc.metadata:
+                # Extract summary from metadata
+                summary = doc.metadata.get('summary', '')
+                if not summary:
+                    # Build summary from available fields if summary is missing
+                    parts = []
+                    if doc.metadata.get('title'):
+                        parts.append(f"Title: {doc.metadata.get('title')}")
+                    if doc.metadata.get('citation'):
+                        parts.append(f"Citation: {doc.metadata.get('citation')}")
+                    if doc.metadata.get('key_issues'):
+                        key_issues = doc.metadata.get('key_issues')
+                        if isinstance(key_issues, list):
+                            parts.append(f"Key Issues: {', '.join(key_issues)}")
+                        elif key_issues:
+                            parts.append(f"Key Issues: {key_issues}")
+                    summary = ' | '.join(parts) if parts else getattr(doc, 'page_content', '')
+                document_strings.append(summary)
+            else:
+                # Fallback: use string representation
+                document_strings.append(str(doc))
         
-        # Parse the filtered results - expect JSON array of IDs or full documents
-        try:
-            # Try to parse as JSON
-            filtered_data = json.loads(filtered_result)
+        payload = {
+            "queries": [rerank_prompt],
+            "documents": document_strings
+        }
+        
+        logger.info(f"Reranking {len(document_strings)} battle cards documents using {reranker_model}...")
+        
+        # Make the API call (use AsyncClient for async function)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+        
+        # Process and return the reranked results
+        scores = data.get("scores", [])
+        if not scores:
+            logger.warning("No scores returned from reranker API")
+            logger.warning(f"Full response: {json.dumps(data, indent=2)}")
+            return retrieved_docs, rerank_prompt, json.dumps(data, indent=2)
+        else:
+            # Pair documents with scores and sort by score
+            doc_scores = list(zip(retrieved_docs, scores))
+            doc_scores.sort(key=lambda x: x[1], reverse=True)
             
-            logger.info(f"DEBUG: Parsed JSON type: {type(filtered_data).__name__}")
-            if isinstance(filtered_data, dict):
-                logger.info(f"DEBUG: Dict keys: {list(filtered_data.keys())}")
-            elif isinstance(filtered_data, list):
-                logger.info(f"DEBUG: List length: {len(filtered_data)}, first item type: {type(filtered_data[0]).__name__ if filtered_data else 'empty'}")
+            # Extract just the documents (first element of each tuple) and return them
+            filtered_docs = [doc for doc, score in doc_scores]
+            logger.info(f"✓ Reranked {len(filtered_docs)} battle cards documents using Qwen3-Reranker")
+            return filtered_docs, rerank_prompt, json.dumps(data, indent=2)
             
-            # Handle different response formats
-            if isinstance(filtered_data, list):
-                # If it's a list of IDs (numbers)
-                if filtered_data and isinstance(filtered_data[0], (int, str)):
-                    filtered_ids = [int(id_val) if isinstance(id_val, str) and id_val.isdigit() else id_val for id_val in filtered_data]
-                    filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
-                    logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents by ID")
-                    return filtered_docs, rerank_prompt, filtered_result
-                # If it's a list of document objects
-                elif filtered_data and isinstance(filtered_data[0], dict):
-                    # Extract IDs from document objects - try multiple field names
-                    filtered_ids = []
-                    for doc in filtered_data:
-                        # Try 'id', 'insight_id', or any field ending with '_id'
-                        doc_id = doc.get('id') or doc.get('insight_id')
-                        if not doc_id:
-                            # Try to find any field ending with '_id'
-                            for key, value in doc.items():
-                                if key.endswith('_id') and isinstance(value, (int, str)):
-                                    doc_id = value
-                                    break
-                        if doc_id:
-                            filtered_ids.append(int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id)
-                    
-                    if filtered_ids:
-                        filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
-                        logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents by insight_id/id")
-                        return filtered_docs, rerank_prompt, filtered_result
-                    else:
-                        logger.warning("No valid IDs found in document objects")
-                        return retrieved_docs, rerank_prompt, filtered_result
-            elif isinstance(filtered_data, dict):
-                # If it's a dict with a key containing a list of documents/insights
-                logger.info("DEBUG: Checking for nested list in dict...")
-                docs_list = (filtered_data.get('documents') or 
-                            filtered_data.get('filtered_results') or 
-                            filtered_data.get('results') or
-                            filtered_data.get('re_ranked_results') or  # Add support for re_ranked_results
-                            filtered_data.get('reranked_results') or   # Also support without underscore
-                            filtered_data.get('insights') or
-                            filtered_data.get('selected_insights'))
-                
-                logger.info(f"DEBUG: docs_list found: {docs_list is not None}, is list: {isinstance(docs_list, list) if docs_list else False}")
-                
-                if docs_list and isinstance(docs_list, list):
-                    # Extract IDs from the nested list
-                    logger.info(f"Found nested list with {len(docs_list)} items")
-                    filtered_ids = []
-                    for doc in docs_list:
-                        if isinstance(doc, dict):
-                            doc_id = doc.get('id') or doc.get('insight_id')
-                            if not doc_id:
-                                for key, value in doc.items():
-                                    if key.endswith('_id') and isinstance(value, (int, str)):
-                                        doc_id = value
-                                        break
-                            if doc_id:
-                                filtered_ids.append(int(doc_id) if isinstance(doc_id, str) and doc_id.isdigit() else doc_id)
-                        elif isinstance(doc, (int, str)):
-                            filtered_ids.append(int(doc) if isinstance(doc, str) and doc.isdigit() else doc)
-                    
-                    logger.info(f"Extracted IDs: {filtered_ids}")
-                    
-                    if filtered_ids:
-                        filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in filtered_ids]
-                        logger.info(f"✓ Filtered to {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents from nested object")
-                        if filtered_docs:
-                            return filtered_docs, rerank_prompt, filtered_result
-                        else:
-                            logger.warning(f"No documents matched the extracted IDs {filtered_ids[:10]}... (candidate IDs are 1-{len(retrieved_docs)})")
-                            return retrieved_docs, rerank_prompt, filtered_result
-                    else:
-                        logger.warning("No IDs could be extracted from nested list")
-                        return retrieved_docs, rerank_prompt, filtered_result
-        
-        except json.JSONDecodeError:
-            # If not JSON, try to extract IDs from text
-            logger.warning("Battle cards reranking result is not valid JSON, attempting to extract IDs from text")
-            id_pattern = r'\b\d+\b'
-            found_ids = [int(id_str) for id_str in re.findall(id_pattern, filtered_result)]
-            if found_ids:
-                filtered_docs = [doc for i, doc in enumerate(retrieved_docs, 1) if i in found_ids]
-                logger.info(f"✓ Extracted {len(filtered_docs)}/{len(retrieved_docs)} battle cards documents from text")
-                return filtered_docs, rerank_prompt, filtered_result
-        
-        # If we couldn't parse the result, return all documents
-        logger.warning("Could not parse battle cards reranking result, returning all documents")
-        return retrieved_docs, rerank_prompt, filtered_result
-        
     except Exception as e:
-        logger.error(f"✗ Error during battle cards reranking: {type(e).__name__}: {str(e)}", exc_info=True)
-        logger.warning("Returning all documents due to battle cards reranking error")
-        return retrieved_docs, "", str(e)
+        logger.error(f"Error reranking battle cards documents: {type(e).__name__}: {str(e)}")
+        return [], "", ""
 
 
 def clean_documents_for_reranking(retrieved_docs: List[Any]) -> List[Dict[str, Any]]:
@@ -2005,7 +1891,8 @@ async def process_rag(
         logger.info(f"  - System Prompt: edited by {prompt_metadata.get('system_prompt_edited_by')} at {prompt_metadata.get('system_prompt_edited_at')}")
 
 
-        company_enumerations = get_company_enumerations(company_name)
+        company_data_manager = get_company_data_manager()
+        company_enumerations = company_data_manager.get_company_enumerations(company_name)
         collection_name = get_collection_name(company_details)
 
         # Step 1: Build optimized retrieval query
@@ -2025,7 +1912,10 @@ async def process_rag(
             retrieval_queries=retrieval_query,
             company_name=company_name,
             company_domain=company_details.company_context.company_domain if company_details else None,
-            known_competitors=company_details.company_context.known_competitors if company_details else None
+            known_competitors=company_details.company_context.known_competitors if company_details else None,
+            backgrounds=backgrounds,
+            icp=icp
+
         )
         
         logger.info(f"✓ After reranking: {len(filtered_docs)}/{len(cleaned_docs)} documents retained")
@@ -2083,8 +1973,24 @@ async def process_rag(
 
 
         
-        email_content = ""
-        
+        email_content = build_email_content(
+            user_id=user_id,
+            backgrounds=backgrounds,
+            marketing_text=marketing_text,
+            asset_type=asset_type,
+            icp=icp,
+            template=template,
+            company_name=company_name,
+            company_details=company_details,
+            retrieval_query=retrieval_query,
+            retrieval_prompt=retrieval_prompt,
+            vector_search_context=vector_search_context,
+            prompt=prompt,
+            refined_text=refined_text,
+            sources=sources,
+            retrieved_docs=retrieved_docs
+        )
+
         logger.info(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         logger.info(f"<<<<<<<<<<<<<<  RAG Pipeline Completed Successfully <<<<<<<<<<<<<<<<<<<")
         logger.info(f"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")

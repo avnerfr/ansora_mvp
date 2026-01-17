@@ -17,7 +17,7 @@ from openai import OpenAI
 import os
 from dotenv import load_dotenv
 import json
-from rag.s3_utils import get_latest_company_file
+from rag.s3_utils import get_company_data_manager
 load_dotenv()
 
 
